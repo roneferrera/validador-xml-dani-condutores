@@ -22,7 +22,6 @@ html, body, [class*="css"] {
     color: #444444;
 }
 h1, h2, h3 { color: #FF8000; font-weight: 700; }
-
 .main-header {
     background: #444444;
     padding: 18px 28px 14px 28px;
@@ -30,61 +29,34 @@ h1, h2, h3 { color: #FF8000; font-weight: 700; }
     border-top: 6px solid #FF8000;
     margin-bottom: 20px;
 }
-.main-header h2 {
-    color: #FF8000 !important;
-    margin: 0;
-    font-size: 1.4rem;
-}
-.main-header p {
-    color: #DDDDDD !important;
-    margin: 4px 0 0 0;
-    font-size: 0.82rem;
-}
+.main-header h2 { color: #FF8000 !important; margin: 0; font-size: 1.4rem; }
+.main-header p { color: #DDDDDD !important; margin: 4px 0 0 0; font-size: 0.82rem; }
 .section-card {
-    background: white;
-    border: 1px solid #E0E0E0;
-    border-left: 4px solid #FF8000;
-    border-radius: 6px;
-    padding: 14px 18px;
-    margin-bottom: 12px;
+    background: white; border: 1px solid #E0E0E0;
+    border-left: 4px solid #FF8000; border-radius: 6px;
+    padding: 14px 18px; margin-bottom: 12px;
 }
 .section-title {
-    color: #FF8000;
-    font-size: 0.8rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 8px;
+    color: #FF8000; font-size: 0.8rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;
 }
 .stButton > button {
-    background-color: #FF8000 !important;
-    color: #FFFFFF !important;
-    border: none !important;
-    border-radius: 4px !important;
-    font-weight: bold !important;
+    background-color: #FF8000 !important; color: #FFFFFF !important;
+    border: none !important; border-radius: 4px !important; font-weight: bold !important;
 }
 .stButton > button:hover { background-color: #D64001 !important; }
 .stDownloadButton > button {
-    background-color: #FF8000 !important;
-    color: #FFFFFF !important;
-    border: none !important;
-    border-radius: 4px !important;
-    font-weight: bold !important;
+    background-color: #FF8000 !important; color: #FFFFFF !important;
+    border: none !important; border-radius: 4px !important; font-weight: bold !important;
 }
 .stDownloadButton > button:hover { background-color: #D64001 !important; }
 [data-testid="metric-container"] {
-    background-color: #F5F5F5;
-    border-left: 4px solid #FF8000;
-    border-radius: 4px;
-    padding: 8px 12px;
+    background-color: #F5F5F5; border-left: 4px solid #FF8000;
+    border-radius: 4px; padding: 8px 12px;
 }
 .footer {
-    text-align: center;
-    color: #999;
-    font-size: 0.72rem;
-    margin-top: 24px;
-    padding-top: 12px;
-    border-top: 1px solid #E0E0E0;
+    text-align: center; color: #999; font-size: 0.72rem;
+    margin-top: 24px; padding-top: 12px; border-top: 1px solid #E0E0E0;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -119,14 +91,11 @@ def limpar_valor(valor) -> float:
         return 0.0
 
 def fmt(v: float) -> str:
-    """Formata para XML — sempre ponto como separador decimal."""
     return f"{v:.2f}"
 
 def fmt_br(v) -> str:
-    """Formata para Excel — vírgula como separador decimal."""
     try:
-        f = float(v)
-        return f"{f:.2f}".replace(".", ",")
+        return f"{float(v):.2f}".replace(".", ",")
     except Exception:
         return str(v)
 
@@ -178,9 +147,7 @@ def ler_xlsx(conteudo_bytes: bytes):
         vlr_ipi       = limpar_valor(reg.get("Vlr Ipi", "0"))
         bc_pis_cofins = max(0.0, vlr_documento - vlr_icms - vlr_icms_st - vlr_ipi)
 
-        cst_icms_raw = reg.get("CST ICMS", "")
-        cst_icms     = safe_int_cst(cst_icms_raw)
-
+        cst_icms = safe_int_cst(reg.get("CST ICMS", ""))
         if cst_icms == "00" and (
             limpar_valor(reg.get("Base Icms St", "0")) > 0 or
             limpar_valor(reg.get("Vlr Icms St",  "0")) > 0
@@ -285,7 +252,6 @@ def aplicar_icms(icms_filho, dados):
                 icms_filho.insert(idx_vicms + 1, el_mod)
 
         mod_val = (el_mod.text or "4").strip()
-
         if mod_val == "4":
             el_pmva = find(icms_filho, "pMVAST")
             if el_pmva is None:
@@ -310,6 +276,85 @@ def aplicar_icms(icms_filho, dados):
             else:
                 novo = etree.SubElement(icms_filho, tag(tn))
                 novo.text = tv
+                modificado = True
+
+    return modificado
+
+# ─────────────────────────────────────────────
+# IPI — preenche vBC/pIPI/vIPI e zera vIPIDevol
+# ─────────────────────────────────────────────
+def aplicar_ipi(imposto_elem, det_elem, dados):
+    """
+    Preenche Base Ipi → <vBC>, Perc Ipi → <pIPI>, Vlr Ipi → <vIPI>.
+    Cria as tags se não existirem (XMLs com qUnid/vUnid).
+    Zera <vIPIDevol> em <impostoDevol>.
+    """
+    modificado = False
+
+    ipi_elem = find(imposto_elem, "IPI")
+    if ipi_elem is not None:
+        ipi_trib = find(ipi_elem, "IPITrib")
+        if ipi_trib is not None:
+
+            # CST
+            el = find(ipi_trib, "CST")
+            if el is not None:
+                el.text = dados["cst_ipi"]
+                modificado = True
+
+            # Remove qUnid / vUnid se existirem (formato alternativo)
+            for tag_alt in ["qUnid", "vUnid"]:
+                el_alt = find(ipi_trib, tag_alt)
+                if el_alt is not None:
+                    ipi_trib.remove(el_alt)
+                    modificado = True
+
+            # vBC — cria se não existir
+            el_vbc = find(ipi_trib, "vBC")
+            if el_vbc is None:
+                idx_cst = next(
+                    (i for i, f in enumerate(ipi_trib) if local(f) == "CST"), None
+                )
+                el_vbc = etree.SubElement(ipi_trib, tag("vBC"))
+                el_vbc.text = fmt(dados["base_ipi"])
+                if idx_cst is not None:
+                    ipi_trib.remove(el_vbc)
+                    ipi_trib.insert(idx_cst + 1, el_vbc)
+                modificado = True
+            else:
+                el_vbc.text = fmt(dados["base_ipi"])
+                modificado = True
+
+            # pIPI — cria se não existir
+            el_pipi = find(ipi_trib, "pIPI")
+            if el_pipi is None:
+                idx_vbc = next(
+                    (i for i, f in enumerate(ipi_trib) if local(f) == "vBC"), None
+                )
+                el_pipi = etree.SubElement(ipi_trib, tag("pIPI"))
+                el_pipi.text = fmt(dados["perc_ipi"])
+                if idx_vbc is not None:
+                    ipi_trib.remove(el_pipi)
+                    ipi_trib.insert(idx_vbc + 1, el_pipi)
+                modificado = True
+            else:
+                el_pipi.text = fmt(dados["perc_ipi"])
+                modificado = True
+
+            # vIPI
+            el_vipi = find(ipi_trib, "vIPI")
+            if el_vipi is not None:
+                el_vipi.text = fmt(dados["vlr_ipi"])
+                modificado = True
+
+    # Zera vIPIDevol
+    imp_devol = find(det_elem, "impostoDevol")
+    if imp_devol is not None:
+        ipi_devol = find(imp_devol, "IPI")
+        if ipi_devol is not None:
+            el_devol = find(ipi_devol, "vIPIDevol")
+            if el_devol is not None:
+                el_devol.text = "0.00"
                 modificado = True
 
     return modificado
@@ -381,7 +426,7 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
         ipi_t = find(imposto, "IPI", "IPITrib")
         if ipi_t:
             antes["CST IPI"] = _get(ipi_t, "CST")
-            antes["BC IPI"]  = _get(ipi_t, "vBC")
+            antes["BC IPI"]  = _get(ipi_t, "vBC") or _get(ipi_t, "qUnid")
             antes["% IPI"]   = _get(ipi_t, "pIPI")
             antes["Vlr IPI"] = _get(ipi_t, "vIPI")
         pis_p = find(imposto, "PIS")
@@ -403,19 +448,19 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
 
         cfop_antes = _get(prod, "CFOP")
 
-        # CFOP
+        # ── CFOP ──
         el = find(prod, "CFOP")
         if el is not None and dados["cfop"]:
             el.text = dados["cfop"]
             modificado = True
 
-        # NCM
+        # ── NCM ──
         el = find(prod, "NCM")
         if el is not None and dados["ncm"]:
             el.text = dados["ncm"]
             modificado = True
 
-        # ICMS
+        # ── ICMS ──
         if icms_pai is not None:
             for icms_f in icms_pai:
                 if local(icms_f).startswith("ICMS"):
@@ -423,23 +468,11 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
                         modificado = True
                     break
 
-        # IPI
-        ipi_elem = find(imposto, "IPI")
-        if ipi_elem is not None:
-            ipi_trib = find(ipi_elem, "IPITrib")
-            if ipi_trib is not None:
-                for tn, tv in [
-                    ("CST",  dados["cst_ipi"]),
-                    ("vBC",  fmt(dados["base_ipi"])),
-                    ("pIPI", fmt(dados["perc_ipi"])),
-                    ("vIPI", fmt(dados["vlr_ipi"])),
-                ]:
-                    el = find(ipi_trib, tn)
-                    if el is not None:
-                        el.text = tv
-                        modificado = True
+        # ── IPI + vIPIDevol ──
+        if aplicar_ipi(imposto, det, dados):
+            modificado = True
 
-        # PIS
+        # ── PIS ──
         pis_pai = find(imposto, "PIS")
         if pis_pai is not None:
             for pf in pis_pai:
@@ -455,7 +488,7 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
                         modificado = True
                 break
 
-        # COFINS
+        # ── COFINS ──
         cof_pai = find(imposto, "COFINS")
         if cof_pai is not None:
             for cf in cof_pai:
@@ -507,7 +540,6 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
         xprod_el = find(prod, "xProd")
         xprod = xprod_el.text if xprod_el is not None else ""
 
-        # Monta linha de conferência — valores numéricos em vírgula
         row_conf = {
             "Arquivo":           nome_arquivo,
             "Chave NF-e":        chave_xml,
@@ -524,7 +556,6 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
             "CFOP Antes":        cfop_antes,
             "CFOP Depois":       dados["cfop"],
             "Vlr Documento":     fmt_br(dados["vlr_documento"]),
-            # ICMS
             "CST ICMS Antes":    antes.get("CST ICMS", ""),
             "CST ICMS Depois":   depois["CST ICMS"],
             "BC ICMS Antes":     fmt_br(antes.get("BC ICMS", "0")),
@@ -533,13 +564,11 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
             "Vlr ICMS Antes":    fmt_br(antes.get("Vlr ICMS", "0")),
             "Vlr ICMS Depois":   fmt_br(depois["Vlr ICMS"]),
             "Diff Vlr ICMS":     fmt_br(_fv(depois["Vlr ICMS"]) - _fv(antes.get("Vlr ICMS","0"))),
-            # ICMS ST
             "BC ICMS ST Antes":  fmt_br(antes.get("BC ICMS ST", "0")),
             "BC ICMS ST Depois": fmt_br(depois["BC ICMS ST"]),
             "Vlr ICMS ST Antes": fmt_br(antes.get("Vlr ICMS ST", "0")),
             "Vlr ICMS ST Depois":fmt_br(depois["Vlr ICMS ST"]),
             "Diff Vlr ICMS ST":  fmt_br(_fv(depois["Vlr ICMS ST"]) - _fv(antes.get("Vlr ICMS ST","0"))),
-            # IPI
             "CST IPI Antes":     antes.get("CST IPI", ""),
             "CST IPI Depois":    depois["CST IPI"],
             "BC IPI Antes":      fmt_br(antes.get("BC IPI", "0")),
@@ -548,7 +577,6 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
             "Vlr IPI Antes":     fmt_br(antes.get("Vlr IPI", "0")),
             "Vlr IPI Depois":    fmt_br(depois["Vlr IPI"]),
             "Diff Vlr IPI":      fmt_br(_fv(depois["Vlr IPI"]) - _fv(antes.get("Vlr IPI","0"))),
-            # PIS
             "CST PIS Antes":     antes.get("CST PIS", ""),
             "CST PIS Depois":    depois["CST PIS"],
             "BC PIS Antes":      fmt_br(antes.get("BC PIS", "0")),
@@ -557,7 +585,6 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
             "Vlr PIS Antes":     fmt_br(antes.get("Vlr PIS", "0")),
             "Vlr PIS Depois":    fmt_br(depois["Vlr PIS"]),
             "Diff Vlr PIS":      fmt_br(_fv(depois["Vlr PIS"]) - _fv(antes.get("Vlr PIS","0"))),
-            # COFINS
             "CST COFINS Antes":  antes.get("CST COFINS", ""),
             "CST COFINS Depois": depois["CST COFINS"],
             "BC COFINS Antes":   fmt_br(antes.get("BC COFINS", "0")),
@@ -637,6 +664,7 @@ def recalcular_totais(inf_nfe):
                         except: pass
                     break
 
+        # vIPIDevol já zerado, soma 0
         imp_devol = find(filho, "impostoDevol")
         if imp_devol:
             el = find(imp_devol, "IPI", "vIPIDevol")
@@ -738,11 +766,8 @@ def gerar_excel_conferencia(todas_diferencas: list) -> bytes:
         fill_par  = PatternFill("solid", fgColor=COR_PAR)
 
         def _fv_br(v):
-            """Converte string com vírgula para float para comparação."""
-            try:
-                return float(str(v).replace(",", "."))
-            except Exception:
-                return 0.0
+            try: return float(str(v).replace(",", "."))
+            except: return 0.0
 
         for row_idx, row in enumerate(
             ws.iter_rows(min_row=2, max_row=ws.max_row), start=2
@@ -799,29 +824,23 @@ def gerar_excel_conferencia(todas_diferencas: list) -> bytes:
 
 
 # ─────────────────────────────────────────────
-# INTERFACE — LAYOUT OTIMIZADO
+# INTERFACE
 # ─────────────────────────────────────────────
-
-# Linha 1 — XLSX e XMLs lado a lado
 col_up1, col_up2 = st.columns(2)
 
 with col_up1:
     st.markdown('<div class="section-card"><div class="section-title">📂 Arquivo XLSX — Domínio Sistemas</div>', unsafe_allow_html=True)
-    arquivo_xlsx = st.file_uploader("Selecione o .xlsx exportado do Domínio", type=["xlsx"], key="xlsx", label_visibility="collapsed")
+    arquivo_xlsx = st.file_uploader("xlsx", type=["xlsx"], key="xlsx", label_visibility="collapsed")
     st.markdown('</div>', unsafe_allow_html=True)
 
 with col_up2:
     st.markdown('<div class="section-card"><div class="section-title">📄 Arquivos XML de NF-e</div>', unsafe_allow_html=True)
     arquivos_xml = st.file_uploader(
-        "Selecione XMLs ou ZIP contendo XMLs",
-        type=["xml", "zip"],
-        accept_multiple_files=True,
-        key="xmls",
-        label_visibility="collapsed"
+        "xmls", type=["xml", "zip"], accept_multiple_files=True,
+        key="xmls", label_visibility="collapsed"
     )
     st.markdown('</div>', unsafe_allow_html=True)
 
-# Linha 2 — CFOPs
 st.markdown('<div class="section-card"><div class="section-title">🔢 CFOPs a Processar</div>', unsafe_allow_html=True)
 
 CFOPS_DEFAULT = ["1201","1202","1410","1411","2201","2202","2410","2411","1949","2949","2603"]
@@ -830,13 +849,9 @@ if "cfops_lista" not in st.session_state:
     st.session_state["cfops_lista"] = list(CFOPS_DEFAULT)
 
 col_inp, col_add, col_lote_inp, col_lote_btn, col_reset = st.columns([2, 1, 2, 1, 1])
-
 with col_inp:
-    nova_cfop = st.text_input(
-        "Adicionar CFOP (4 dígitos)", max_chars=4,
-        placeholder="ex: 1410", key="nova_cfop_input",
-        label_visibility="collapsed"
-    )
+    nova_cfop = st.text_input("cfop", max_chars=4, placeholder="ex: 1410",
+                               key="nova_cfop_input", label_visibility="collapsed")
 with col_add:
     if st.button("➕ Adicionar", key="btn_add_cfop", use_container_width=True):
         cfop_clean = re.sub(r"[^0-9]", "", nova_cfop.strip())
@@ -847,25 +862,20 @@ with col_add:
             st.warning("CFOP deve ter 4 dígitos.")
         else:
             st.info(f"{cfop_clean} já está na lista.")
-
 with col_lote_inp:
-    remover_lote = st.text_input(
-        "Remover em lote", placeholder="ex: 1949, 2949",
-        key="remover_lote_input", label_visibility="collapsed"
-    )
+    remover_lote = st.text_input("lote", placeholder="ex: 1949, 2949",
+                                  key="remover_lote_input", label_visibility="collapsed")
 with col_lote_btn:
     if st.button("🗑️ Remover", key="btn_rm_lote", use_container_width=True):
         for c in [re.sub(r"[^0-9]", "", x.strip()) for x in remover_lote.split(",") if x.strip()]:
             if c in st.session_state["cfops_lista"]:
                 st.session_state["cfops_lista"].remove(c)
         st.rerun()
-
 with col_reset:
     if st.button("🔄 Padrão", key="btn_reset", use_container_width=True):
         st.session_state["cfops_lista"] = list(CFOPS_DEFAULT)
         st.rerun()
 
-# Tags de CFOPs ativas com botão remover
 if st.session_state["cfops_lista"]:
     cfops_para_remover = []
     n_cols = min(len(st.session_state["cfops_lista"]), 12)
@@ -880,9 +890,9 @@ if st.session_state["cfops_lista"]:
                 st.session_state["cfops_lista"].remove(c)
         st.rerun()
 
+st.caption(f"CFOPs ativas: **{', '.join(sorted(st.session_state['cfops_lista'])) or 'Nenhuma'}**")
 st.markdown('</div>', unsafe_allow_html=True)
 
-# Linha 3 — Botão processar
 if st.button("▶ Processar XMLs", type="primary", key="btn_processar", use_container_width=True):
     if not arquivo_xlsx:
         st.error("❌ Selecione o arquivo XLSX.")
@@ -903,7 +913,6 @@ if st.button("▶ Processar XMLs", type="primary", key="btn_processar", use_cont
         st.error("❌ Nenhum item válido no XLSX.")
         st.stop()
 
-    # Métricas de entrada
     col_a, col_b, col_c = st.columns(3)
     col_a.metric("📊 Itens indexados", len(dados_indexados))
     col_b.metric("🔢 CFOPs ativas",    len(cfops_ativas))
@@ -915,10 +924,10 @@ if st.button("▶ Processar XMLs", type="primary", key="btn_processar", use_cont
                 f"Chave: {ch} | Seq: {seq} | CFOP: {d['cfop']}\n"
                 f"CST ICMS: {d['cst_icms']} | vICMS: {d['vlr_icms']} | "
                 f"BC ST: {d['base_icms_st']} | vST: {d['vlr_icms_st']}\n"
-                f"vIPI: {d['vlr_ipi']} | BC PIS/COF: {d['bc_pis_cofins']}"
+                f"BC IPI: {d['base_ipi']} | % IPI: {d['perc_ipi']} | vIPI: {d['vlr_ipi']}\n"
+                f"BC PIS/COF: {d['bc_pis_cofins']}"
             )
 
-    # Coleta XMLs (suporta ZIP)
     xmls_para_processar = {}
     for arq in arquivos_xml:
         if arq.name.lower().endswith(".zip"):
@@ -952,7 +961,6 @@ if st.button("▶ Processar XMLs", type="primary", key="btn_processar", use_cont
     err_c  = sum(1 for _, _, s in resultados if s == "erro")
     diff_c = sum(1 for r in todas_diferencas if r.get("Tem Diferença") == "SIM")
 
-    # Métricas de resultado
     col_x, col_y, col_z, col_w = st.columns(4)
     col_x.metric("✅ Alterados",     ok_c)
     col_y.metric("ℹ️ Sem alteração", info_c)
@@ -961,14 +969,13 @@ if st.button("▶ Processar XMLs", type="primary", key="btn_processar", use_cont
 
     st.divider()
 
-    # ── DOWNLOADS — Excel primeiro, depois XMLs ──
     col_dl1, col_dl2 = st.columns(2)
 
     with col_dl1:
         if todas_diferencas:
             excel_bytes = gerar_excel_conferencia(todas_diferencas)
             st.download_button(
-                label=f"📥 Baixar Excel de Conferência ({len(todas_diferencas)} itens / {diff_c} com diferença)",
+                label=f"📥 Excel de Conferência ({len(todas_diferencas)} itens / {diff_c} com diff)",
                 data=excel_bytes,
                 file_name="conferencia_nfe_dni.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -982,7 +989,7 @@ if st.button("▶ Processar XMLs", type="primary", key="btn_processar", use_cont
             if len(xmls_modificados) == 1:
                 nome_arq, conteudo_arq = list(xmls_modificados.items())[0]
                 st.download_button(
-                    label=f"⬇ Baixar XML alterado: {nome_arq}",
+                    label=f"⬇ Baixar XML: {nome_arq}",
                     data=conteudo_arq,
                     file_name=nome_arq,
                     mime="application/xml",
@@ -995,7 +1002,7 @@ if st.button("▶ Processar XMLs", type="primary", key="btn_processar", use_cont
                         zf.writestr(nome_arq, conteudo_arq)
                 buf.seek(0)
                 st.download_button(
-                    label=f"⬇ Baixar {len(xmls_modificados)} XMLs alterados (ZIP)",
+                    label=f"⬇ Baixar {len(xmls_modificados)} XMLs (ZIP)",
                     data=buf,
                     file_name="xmls_modificados_dni.zip",
                     mime="application/zip",
@@ -1006,6 +1013,6 @@ if st.button("▶ Processar XMLs", type="primary", key="btn_processar", use_cont
 
 st.markdown("""
 <div class="footer">
-    Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v6.0 · DNI
+    Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v7.0 · DNI
 </div>
 """, unsafe_allow_html=True)
