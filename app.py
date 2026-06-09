@@ -459,76 +459,124 @@ def aplicar_icms(icms_filho, dados):
     return modificado
 
 # ─────────────────────────────────────────────
-# IPI — LÓGICA COMPLETA v7.2
+# IPI — LÓGICA COMPLETA v7.3
+# Cria o bloco <IPI> completo se não existir no XML mas houver valor no XLSX
+# Zera <vIPIDevol> em <impostoDevol> sempre que existir
 # ─────────────────────────────────────────────
 def aplicar_ipi(imposto_elem, det_elem, dados):
     """
     Regras:
-    1. Se o XLSX tem Base Ipi / Perc Ipi / Vlr Ipi com valores > 0:
-       - Dentro de <IPITrib>:
-         * Remove <qUnid> e <vUnid> se existirem
-         * Cria <vBC> se não existir (após <CST>)
-         * Cria <pIPI> se não existir (após <vBC>)
-         * Atualiza ou cria <vIPI> (após <pIPI>)
-         * Preenche com os valores do XLSX
-    2. Sempre zera <vIPIDevol> em <impostoDevol>
-    3. Preserva <CNPJProd> e <cEnq> dentro de <IPI>
+    1. Se XLSX tem Base Ipi / Perc Ipi / Vlr Ipi (tem_ipi=True):
+       a. Se <IPI> já existe em <imposto>:
+          - Remove <qUnid> e <vUnid> de <IPITrib> se existirem
+          - Cria <vBC>, <pIPI>, <vIPI> se não existirem (inseridos na ordem correta)
+          - Atualiza os valores
+       b. Se <IPI> NÃO existe em <imposto>:
+          - Cria o bloco completo:
+            <IPI>
+              <cEnq>999</cEnq>
+              <IPITrib>
+                <CST>XX</CST>
+                <vBC>0.00</vBC>
+                <pIPI>0.00</pIPI>
+                <vIPI>0.00</vIPI>
+              </IPITrib>
+            </IPI>
+          - Insere antes de <PIS> (ordem SEFAZ)
+    2. Sempre zera <vIPIDevol> em <impostoDevol> se existir
+    3. Preserva <CNPJProd> e <cEnq> se já existirem
     """
     modificado = False
     tem_ipi    = dados.get("tem_ipi", False)
 
-    ipi_elem = find(imposto_elem, "IPI")
-    if ipi_elem is not None:
-        ipi_trib = find(ipi_elem, "IPITrib")
-        if ipi_trib is not None and tem_ipi:
+    if tem_ipi:
+        ipi_elem = find(imposto_elem, "IPI")
 
-            # ── 1. CST ──
-            el_cst = find(ipi_trib, "CST")
-            if el_cst is not None:
-                el_cst.text = dados["cst_ipi"]
-                modificado = True
+        # ── Bloco IPI não existe → cria completo ──
+        if ipi_elem is None:
+            ipi_elem = etree.Element(nstag("IPI"))
 
-            # ── 2. Remove qUnid e vUnid (formato alternativo) ──
-            for tag_rem in ["qUnid", "vUnid"]:
-                el_rem = find(ipi_trib, tag_rem)
-                if el_rem is not None:
-                    ipi_trib.remove(el_rem)
+            # <cEnq> obrigatório
+            el_cenq = etree.SubElement(ipi_elem, nstag("cEnq"))
+            el_cenq.text = "999"
+
+            # <IPITrib>
+            ipi_trib = etree.SubElement(ipi_elem, nstag("IPITrib"))
+
+            el_cst = etree.SubElement(ipi_trib, nstag("CST"))
+            el_cst.text = dados["cst_ipi"] if dados["cst_ipi"] != "00" else "50"
+
+            el_vbc = etree.SubElement(ipi_trib, nstag("vBC"))
+            el_vbc.text = fmt(dados["base_ipi"])
+
+            el_pipi = etree.SubElement(ipi_trib, nstag("pIPI"))
+            el_pipi.text = fmt(dados["perc_ipi"])
+
+            el_vipi = etree.SubElement(ipi_trib, nstag("vIPI"))
+            el_vipi.text = fmt(dados["vlr_ipi"])
+
+            # Insere antes de <PIS> para respeitar ordem SEFAZ
+            pis_elem = find(imposto_elem, "PIS")
+            if pis_elem is not None:
+                idx_pis = list(imposto_elem).index(pis_elem)
+                imposto_elem.insert(idx_pis, ipi_elem)
+            else:
+                imposto_elem.append(ipi_elem)
+
+            modificado = True
+
+        # ── Bloco IPI já existe → atualiza ──
+        else:
+            ipi_trib = find(ipi_elem, "IPITrib")
+            if ipi_trib is not None:
+
+                # CST
+                el_cst = find(ipi_trib, "CST")
+                if el_cst is not None:
+                    el_cst.text = dados["cst_ipi"]
                     modificado = True
 
-            # ── 3. vBC — cria se não existir, sempre após CST ──
-            el_vbc = find(ipi_trib, "vBC")
-            if el_vbc is None:
-                el_vbc = etree.Element(nstag("vBC"))
-                el_vbc.text = fmt(dados["base_ipi"])
-                _insert_after(ipi_trib, "CST", el_vbc)
-                modificado = True
-            else:
-                el_vbc.text = fmt(dados["base_ipi"])
-                modificado = True
+                # Remove qUnid / vUnid (formato alternativo)
+                for tag_rem in ["qUnid", "vUnid"]:
+                    el_rem = find(ipi_trib, tag_rem)
+                    if el_rem is not None:
+                        ipi_trib.remove(el_rem)
+                        modificado = True
 
-            # ── 4. pIPI — cria se não existir, sempre após vBC ──
-            el_pipi = find(ipi_trib, "pIPI")
-            if el_pipi is None:
-                el_pipi = etree.Element(nstag("pIPI"))
-                el_pipi.text = fmt(dados["perc_ipi"])
-                _insert_after(ipi_trib, "vBC", el_pipi)
-                modificado = True
-            else:
-                el_pipi.text = fmt(dados["perc_ipi"])
-                modificado = True
+                # vBC — cria se não existir
+                el_vbc = find(ipi_trib, "vBC")
+                if el_vbc is None:
+                    el_vbc = etree.Element(nstag("vBC"))
+                    el_vbc.text = fmt(dados["base_ipi"])
+                    _insert_after(ipi_trib, "CST", el_vbc)
+                    modificado = True
+                else:
+                    el_vbc.text = fmt(dados["base_ipi"])
+                    modificado = True
 
-            # ── 5. vIPI — cria se não existir, sempre após pIPI ──
-            el_vipi = find(ipi_trib, "vIPI")
-            if el_vipi is None:
-                el_vipi = etree.Element(nstag("vIPI"))
-                el_vipi.text = fmt(dados["vlr_ipi"])
-                _insert_after(ipi_trib, "pIPI", el_vipi)
-                modificado = True
-            else:
-                el_vipi.text = fmt(dados["vlr_ipi"])
-                modificado = True
+                # pIPI — cria se não existir
+                el_pipi = find(ipi_trib, "pIPI")
+                if el_pipi is None:
+                    el_pipi = etree.Element(nstag("pIPI"))
+                    el_pipi.text = fmt(dados["perc_ipi"])
+                    _insert_after(ipi_trib, "vBC", el_pipi)
+                    modificado = True
+                else:
+                    el_pipi.text = fmt(dados["perc_ipi"])
+                    modificado = True
 
-    # ── 6. Zera vIPIDevol em impostoDevol ──
+                # vIPI — cria se não existir
+                el_vipi = find(ipi_trib, "vIPI")
+                if el_vipi is None:
+                    el_vipi = etree.Element(nstag("vIPI"))
+                    el_vipi.text = fmt(dados["vlr_ipi"])
+                    _insert_after(ipi_trib, "pIPI", el_vipi)
+                    modificado = True
+                else:
+                    el_vipi.text = fmt(dados["vlr_ipi"])
+                    modificado = True
+
+    # ── Zera vIPIDevol em impostoDevol (sempre) ──
     imp_devol = find(det_elem, "impostoDevol")
     if imp_devol is not None:
         ipi_devol = find(imp_devol, "IPI")
