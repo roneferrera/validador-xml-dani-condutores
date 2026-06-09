@@ -6,50 +6,103 @@ import zipfile
 from lxml import etree
 
 # ─────────────────────────────────────────────
-# TEMA THOMSON REUTERS / DOMÍNIO SISTEMAS
+# TEMA THOMSON REUTERS — igual ao RPA TXT
 # ─────────────────────────────────────────────
 st.set_page_config(
     page_title="Enriquecedor de NF-e — DNI",
+    page_icon="🟠",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
 st.markdown("""
 <style>
-    .stApp { background-color: #F5F5F5; }
-    .main-header {
-        background: linear-gradient(135deg, #C8102E 0%, #8B0000 100%);
-        padding: 20px 32px; border-radius: 8px; margin-bottom: 20px;
-    }
-    .main-header h1 { color: white !important; font-size: 1.5rem !important;
-        font-weight: 700 !important; margin: 0 !important; }
-    .main-header p { color: rgba(255,255,255,0.85) !important;
-        font-size: 0.82rem !important; margin: 4px 0 0 0 !important; }
-    .section-card { background: white; border: 1px solid #E0E0E0;
-        border-left: 4px solid #C8102E; border-radius: 6px;
-        padding: 18px 22px; margin-bottom: 14px; }
-    .section-title { color: #C8102E; font-size: 0.85rem; font-weight: 700;
-        text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px; }
-    .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #C8102E, #8B0000) !important;
-        color: white !important; border: none !important; border-radius: 6px !important;
-        font-weight: 600 !important; font-size: 1rem !important;
-        padding: 12px 32px !important; width: 100%;
-    }
-    .stButton > button[kind="primary"]:hover {
-        background: linear-gradient(135deg, #A00D25, #6B0000) !important;
-        box-shadow: 0 4px 12px rgba(200,16,46,0.3) !important;
-    }
-    [data-testid="metric-container"] { background: white;
-        border: 1px solid #E0E0E0; border-radius: 6px; padding: 10px 14px; }
-    .footer { text-align: center; color: #999; font-size: 0.75rem;
-        margin-top: 28px; padding-top: 14px; border-top: 1px solid #E0E0E0; }
+html, body, [class*="css"] {
+    font-family: 'Segoe UI', 'Arial', sans-serif;
+    color: #444444;
+}
+h1, h2, h3 { color: #FF8000; font-weight: 700; }
+
+.main-header {
+    background: #444444;
+    padding: 22px 28px 16px 28px;
+    border-radius: 8px;
+    border-top: 6px solid #FF8000;
+    margin-bottom: 24px;
+}
+.main-header h2 {
+    color: #FF8000 !important;
+    margin: 0;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 1.5rem;
+}
+.main-header p {
+    color: #DDDDDD !important;
+    margin: 6px 0 0 0;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 0.85rem;
+}
+
+.section-card {
+    background: white;
+    border: 1px solid #E0E0E0;
+    border-left: 4px solid #FF8000;
+    border-radius: 6px;
+    padding: 18px 22px;
+    margin-bottom: 14px;
+}
+.section-title {
+    color: #FF8000;
+    font-size: 0.85rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 10px;
+}
+
+.stButton > button {
+    background-color: #FF8000 !important;
+    color: #FFFFFF !important;
+    border: none !important;
+    border-radius: 4px !important;
+    font-weight: bold !important;
+}
+.stButton > button:hover {
+    background-color: #D64001 !important;
+    color: #FFFFFF !important;
+}
+.stDownloadButton > button {
+    background-color: #FF8000 !important;
+    color: #FFFFFF !important;
+    border: none !important;
+    border-radius: 4px !important;
+    font-weight: bold !important;
+}
+.stDownloadButton > button:hover {
+    background-color: #D64001 !important;
+    color: #FFFFFF !important;
+}
+[data-testid="metric-container"] {
+    background-color: #E9E9E9;
+    border-left: 4px solid #FF8000;
+    border-radius: 4px;
+    padding: 10px;
+}
+hr { border-color: #FF8000; }
+.footer {
+    text-align: center;
+    color: #999;
+    font-size: 0.75rem;
+    margin-top: 28px;
+    padding-top: 14px;
+    border-top: 1px solid #E0E0E0;
+}
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
 <div class="main-header">
-    <h1>⚡ Enriquecedor de NF-e — DNI</h1>
+    <h2>🧾 Enriquecedor de NF-e — DNI</h2>
     <p>Thomson Reuters · Domínio Sistemas · Processamento Fiscal Automatizado</p>
 </div>
 """, unsafe_allow_html=True)
@@ -78,7 +131,7 @@ def safe_int_cst(val: str) -> str:
     try:
         return str(int(float(val))).zfill(2)
     except Exception:
-        return str(val).zfill(2)
+        return str(val).zfill(2) if val else "00"
 
 # ─────────────────────────────────────────────
 # LEITURA DO XLSX
@@ -113,30 +166,35 @@ def ler_xlsx(conteudo_bytes: bytes):
         bc_pis_cofins = max(0.0, vlr_documento - vlr_icms - vlr_icms_st - vlr_ipi)
 
         indexado[(chave_nfe, seq)] = {
-            "cfop":          reg.get("Cfop", "").strip(),
-            "cod_item":      reg.get("Cod Item", "").strip(),
-            "desc_item":     reg.get("Desc Item", "").strip(),
-            "ncm":           reg.get("NCM", "").strip(),
-            "nro_documento": reg.get("Nro Documento", "").strip(),
-            "razao_social":  reg.get("Razao Social", "").strip(),
-            "cst_icms":      safe_int_cst(reg.get("CST ICMS", "0")),
-            "base_icms":     limpar_valor(reg.get("Base Icms", "0")),
-            "perc_icms":     limpar_valor(reg.get("Perc ICms", "0")),
-            "vlr_icms":      vlr_icms,
-            "base_icms_st":  limpar_valor(reg.get("Base Icms St", "0")),
-            "vlr_icms_st":   vlr_icms_st,
-            "cst_ipi":       safe_int_cst(reg.get("CST IPI", "50")),
-            "base_ipi":      limpar_valor(reg.get("Base Ipi", "0")),
-            "perc_ipi":      limpar_valor(reg.get("Perc Ipi", "0")),
-            "vlr_ipi":       vlr_ipi,
-            "cst_pis":       safe_int_cst(reg.get("CST PIS", "1")),
-            "perc_pis":      limpar_valor(reg.get("Perc Pis", "0")),
-            "vlr_pis":       limpar_valor(reg.get("Vlr Pis", "0")),
-            "cst_cofins":    safe_int_cst(reg.get("CST COFINS", "1")),
-            "perc_cofins":   limpar_valor(reg.get("Perc Cofins", "0")),
-            "vlr_cofins":    limpar_valor(reg.get("Vlr Cofins", "0")),
-            "bc_pis_cofins": bc_pis_cofins,
-            "vlr_documento": vlr_documento,
+            "cfop":           reg.get("Cfop", "").strip(),
+            "cod_item":       reg.get("Cod Item", "").strip(),
+            "desc_item":      reg.get("Desc Item", "").strip(),
+            "ncm":            reg.get("NCM", "").strip(),
+            "nro_documento":  reg.get("Nro Documento", "").strip(),
+            "razao_social":   reg.get("Razao Social", "").strip(),
+            "cnpj":           reg.get("CNPJ-CPF", "").strip(),
+            "data_entrada":   reg.get("Data Entrada", "").strip(),
+            "data_emissao":   reg.get("Data Emissao", "").strip(),
+            "uf":             reg.get("UF", "").strip(),
+            "municipio":      reg.get("Municipio", "").strip(),
+            "cst_icms":       safe_int_cst(reg.get("CST ICMS", "0")),
+            "base_icms":      limpar_valor(reg.get("Base Icms", "0")),
+            "perc_icms":      limpar_valor(reg.get("Perc ICms", "0")),
+            "vlr_icms":       vlr_icms,
+            "base_icms_st":   limpar_valor(reg.get("Base Icms St", "0")),
+            "vlr_icms_st":    vlr_icms_st,
+            "cst_ipi":        safe_int_cst(reg.get("CST IPI", "50")),
+            "base_ipi":       limpar_valor(reg.get("Base Ipi", "0")),
+            "perc_ipi":       limpar_valor(reg.get("Perc Ipi", "0")),
+            "vlr_ipi":        vlr_ipi,
+            "cst_pis":        safe_int_cst(reg.get("CST PIS", "1")),
+            "perc_pis":       limpar_valor(reg.get("Perc Pis", "0")),
+            "vlr_pis":        limpar_valor(reg.get("Vlr Pis", "0")),
+            "cst_cofins":     safe_int_cst(reg.get("CST COFINS", "1")),
+            "perc_cofins":    limpar_valor(reg.get("Perc Cofins", "0")),
+            "vlr_cofins":     limpar_valor(reg.get("Vlr Cofins", "0")),
+            "bc_pis_cofins":  bc_pis_cofins,
+            "vlr_documento":  vlr_documento,
         }
 
     return indexado
@@ -164,36 +222,20 @@ def find(elem, *nomes):
         atual = enc
     return atual
 
-def set_elem(pai, nome_local, valor, idx_apos=None):
-    """Define texto de filho, criando se necessário e posicionando após idx_apos."""
-    for filho in pai:
-        if local(filho) == nome_local:
-            filho.text = valor
-            return filho
-    novo = etree.SubElement(pai, tag(nome_local))
-    novo.text = valor
-    if idx_apos is not None:
-        pai.remove(novo)
-        pai.insert(idx_apos + 1, novo)
-    return novo
-
 # ─────────────────────────────────────────────
-# PROCESSAMENTO ICMS ST (ORDEM SEFAZ)
+# ICMS ST
 # ─────────────────────────────────────────────
 CST_COM_ST = {"10", "30", "70", "90"}
 
 def aplicar_icms(icms_filho, dados):
-    """Aplica ICMS próprio + ST conforme ordem do schema SEFAZ."""
     cst = dados["cst_icms"]
     modificado = False
 
-    # CST
     el = find(icms_filho, "CST")
     if el is not None:
         el.text = cst
         modificado = True
 
-    # ICMS próprio
     for tag_nome, val in [
         ("vBC",   fmt(dados["base_icms"])),
         ("pICMS", fmt(dados["perc_icms"])),
@@ -204,29 +246,31 @@ def aplicar_icms(icms_filho, dados):
             el.text = val
             modificado = True
 
-    # ST — só aplica se CST com ST e houver valores
     if cst in CST_COM_ST and (dados["base_icms_st"] > 0 or dados["vlr_icms_st"] > 0):
-        # modBCST — mantém existente ou usa 4 (MVA)
         el_mod = find(icms_filho, "modBCST")
         if el_mod is None:
-            # Insere após vICMS
             idx = next((i for i, f in enumerate(icms_filho) if local(f) == "vICMS"), None)
-            el_mod = set_elem(icms_filho, "modBCST", "4", idx)
-        mod_val = (el_mod.text or "4").strip()
+            el_mod = etree.SubElement(icms_filho, tag("modBCST"))
+            el_mod.text = "4"
+            if idx is not None:
+                icms_filho.remove(el_mod)
+                icms_filho.insert(idx + 1, el_mod)
 
-        # pMVAST — obrigatório se modBCST == 4
+        mod_val = (el_mod.text or "4").strip()
         if mod_val == "4":
             el_pmva = find(icms_filho, "pMVAST")
             if el_pmva is None:
                 idx_mod = next((i for i, f in enumerate(icms_filho) if local(f) == "modBCST"), None)
-                el_pmva = set_elem(icms_filho, "pMVAST", "0.00", idx_mod)
-            # mantém valor original se já existir
+                el_pmva = etree.SubElement(icms_filho, tag("pMVAST"))
+                el_pmva.text = "0.00"
+                if idx_mod is not None:
+                    icms_filho.remove(el_pmva)
+                    icms_filho.insert(idx_mod + 1, el_pmva)
 
-        # vBCST / pICMSST / vICMSST
         for tag_nome, val in [
-            ("vBCST",    fmt(dados["base_icms_st"])),
-            ("pICMSST",  fmt(dados["perc_icms"])),
-            ("vICMSST",  fmt(max(0.0, dados["vlr_icms_st"]))),
+            ("vBCST",   fmt(dados["base_icms_st"])),
+            ("pICMSST", fmt(dados["perc_icms"])),
+            ("vICMSST", fmt(max(0.0, dados["vlr_icms_st"]))),
         ]:
             el = find(icms_filho, tag_nome)
             if el is not None:
@@ -235,9 +279,8 @@ def aplicar_icms(icms_filho, dados):
 
     return modificado
 
-
 # ─────────────────────────────────────────────
-# PROCESSAMENTO XML PRINCIPAL
+# PROCESSAMENTO XML
 # ─────────────────────────────────────────────
 def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
     try:
@@ -271,7 +314,7 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
         return None, "nenhum item com CFOP válido — não alterado", "info", []
 
     modificado = False
-    diferencas = []  # para excel de conferência
+    diferencas = []
 
     for det, n_item, dados in itens_validos:
         prod    = find(det, "prod")
@@ -279,51 +322,53 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
         if prod is None or imposto is None:
             continue
 
-        # ── Coleta valores ANTES (para conferência) ──
-        def _get(elem, *path):
+        # ── Coleta ANTES ──
+        def _get_txt(elem, *path):
             el = find(elem, *path)
-            return el.text.strip() if el is not None and el.text else "0"
+            return (el.text or "0").strip() if el is not None else "0"
 
-        antes = {
-            "vBC_icms":   _get(imposto, "ICMS", *["ICMS" + dados["cst_icms"].zfill(2)], "vBC") if False else "0",
-            "vICMS":      "0",
-            "vBCST":      "0",
-            "vICMSST":    "0",
-            "vIPI":       "0",
-            "vBC_pis":    "0",
-            "vPIS":       "0",
-            "vBC_cofins": "0",
-            "vCOFINS":    "0",
-        }
+        def _fv(v):
+            try: return round(float(v), 2)
+            except: return 0.0
 
-        # Coleta real dos valores antes
+        antes = {}
         icms_pai = find(imposto, "ICMS")
         if icms_pai:
             for icms_f in icms_pai:
                 if local(icms_f).startswith("ICMS"):
-                    antes["vBC_icms"] = _get(icms_f, "vBC") or "0"
-                    antes["vICMS"]    = _get(icms_f, "vICMS") or "0"
-                    antes["vBCST"]    = _get(icms_f, "vBCST") or "0"
-                    antes["vICMSST"]  = _get(icms_f, "vICMSST") or "0"
+                    antes["CST ICMS"]    = _get_txt(icms_f, "CST")
+                    antes["BC ICMS"]     = _get_txt(icms_f, "vBC")
+                    antes["% ICMS"]      = _get_txt(icms_f, "pICMS")
+                    antes["Vlr ICMS"]    = _get_txt(icms_f, "vICMS")
+                    antes["BC ICMS ST"]  = _get_txt(icms_f, "vBCST")
+                    antes["Vlr ICMS ST"] = _get_txt(icms_f, "vICMSST")
                     break
-        ipi_el = find(imposto, "IPI", "IPITrib")
-        if ipi_el:
-            antes["vIPI"] = _get(ipi_el, "vIPI") or "0"
-        pis_pai = find(imposto, "PIS")
-        if pis_pai:
-            for pf in pis_pai:
-                antes["vBC_pis"] = _get(pf, "vBC") or "0"
-                antes["vPIS"]    = _get(pf, "vPIS") or "0"
+        ipi_t = find(imposto, "IPI", "IPITrib")
+        if ipi_t:
+            antes["CST IPI"]  = _get_txt(ipi_t, "CST")
+            antes["BC IPI"]   = _get_txt(ipi_t, "vBC")
+            antes["% IPI"]    = _get_txt(ipi_t, "pIPI")
+            antes["Vlr IPI"]  = _get_txt(ipi_t, "vIPI")
+        pis_p = find(imposto, "PIS")
+        if pis_p:
+            for pf in pis_p:
+                antes["CST PIS"]  = _get_txt(pf, "CST")
+                antes["BC PIS"]   = _get_txt(pf, "vBC")
+                antes["% PIS"]    = _get_txt(pf, "pPIS")
+                antes["Vlr PIS"]  = _get_txt(pf, "vPIS")
                 break
-        cof_pai = find(imposto, "COFINS")
-        if cof_pai:
-            for cf in cof_pai:
-                antes["vBC_cofins"] = _get(cf, "vBC") or "0"
-                antes["vCOFINS"]    = _get(cf, "vCOFINS") or "0"
+        cof_p = find(imposto, "COFINS")
+        if cof_p:
+            for cf in cof_p:
+                antes["CST COFINS"]  = _get_txt(cf, "CST")
+                antes["BC COFINS"]   = _get_txt(cf, "vBC")
+                antes["% COFINS"]    = _get_txt(cf, "pCOFINS")
+                antes["Vlr COFINS"]  = _get_txt(cf, "vCOFINS")
                 break
 
         # ── CFOP ──
         el = find(prod, "CFOP")
+        cfop_antes = el.text if el is not None else ""
         if el is not None and dados["cfop"]:
             el.text = dados["cfop"]
             modificado = True
@@ -347,30 +392,30 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
         if ipi_elem is not None:
             ipi_trib = find(ipi_elem, "IPITrib")
             if ipi_trib is not None:
-                for tag_nome, val in [
+                for tn, tv in [
                     ("CST",  dados["cst_ipi"]),
                     ("vBC",  fmt(dados["base_ipi"])),
                     ("pIPI", fmt(dados["perc_ipi"])),
                     ("vIPI", fmt(dados["vlr_ipi"])),
                 ]:
-                    el = find(ipi_trib, tag_nome)
+                    el = find(ipi_trib, tn)
                     if el is not None:
-                        el.text = val
+                        el.text = tv
                         modificado = True
 
         # ── PIS ──
         pis_pai = find(imposto, "PIS")
         if pis_pai is not None:
             for pf in pis_pai:
-                for tag_nome, val in [
+                for tn, tv in [
                     ("CST",  dados["cst_pis"]),
                     ("vBC",  fmt(dados["bc_pis_cofins"])),
                     ("pPIS", fmt(dados["perc_pis"])),
                     ("vPIS", fmt(dados["vlr_pis"])),
                 ]:
-                    el = find(pf, tag_nome)
+                    el = find(pf, tn)
                     if el is not None:
-                        el.text = val
+                        el.text = tv
                         modificado = True
                 break
 
@@ -378,68 +423,116 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
         cof_pai = find(imposto, "COFINS")
         if cof_pai is not None:
             for cf in cof_pai:
-                for tag_nome, val in [
+                for tn, tv in [
                     ("CST",     dados["cst_cofins"]),
                     ("vBC",     fmt(dados["bc_pis_cofins"])),
                     ("pCOFINS", fmt(dados["perc_cofins"])),
                     ("vCOFINS", fmt(dados["vlr_cofins"])),
                 ]:
-                    el = find(cf, tag_nome)
+                    el = find(cf, tn)
                     if el is not None:
-                        el.text = val
+                        el.text = tv
                         modificado = True
                 break
 
-        # ── Coleta valores DEPOIS ──
+        # ── Coleta DEPOIS ──
         depois = {
-            "vBC_icms":   fmt(dados["base_icms"]),
-            "vICMS":      fmt(dados["vlr_icms"]),
-            "vBCST":      fmt(dados["base_icms_st"]),
-            "vICMSST":    fmt(dados["vlr_icms_st"]),
-            "vIPI":       fmt(dados["vlr_ipi"]),
-            "vBC_pis":    fmt(dados["bc_pis_cofins"]),
-            "vPIS":       fmt(dados["vlr_pis"]),
-            "vBC_cofins": fmt(dados["bc_pis_cofins"]),
-            "vCOFINS":    fmt(dados["vlr_cofins"]),
+            "CST ICMS":    dados["cst_icms"],
+            "BC ICMS":     fmt(dados["base_icms"]),
+            "% ICMS":      fmt(dados["perc_icms"]),
+            "Vlr ICMS":    fmt(dados["vlr_icms"]),
+            "BC ICMS ST":  fmt(dados["base_icms_st"]),
+            "Vlr ICMS ST": fmt(max(0.0, dados["vlr_icms_st"])),
+            "CST IPI":     dados["cst_ipi"],
+            "BC IPI":      fmt(dados["base_ipi"]),
+            "% IPI":       fmt(dados["perc_ipi"]),
+            "Vlr IPI":     fmt(dados["vlr_ipi"]),
+            "CST PIS":     dados["cst_pis"],
+            "BC PIS":      fmt(dados["bc_pis_cofins"]),
+            "% PIS":       fmt(dados["perc_pis"]),
+            "Vlr PIS":     fmt(dados["vlr_pis"]),
+            "CST COFINS":  dados["cst_cofins"],
+            "BC COFINS":   fmt(dados["bc_pis_cofins"]),
+            "% COFINS":    fmt(dados["perc_cofins"]),
+            "Vlr COFINS":  fmt(dados["vlr_cofins"]),
         }
 
-        # Detecta diferenças
-        campos_conf = [
-            ("vBC ICMS",   "vBC_icms"),
-            ("vICMS",      "vICMS"),
-            ("vBCST",      "vBCST"),
-            ("vICMSST",    "vICMSST"),
-            ("vIPI",       "vIPI"),
-            ("BC PIS",     "vBC_pis"),
-            ("vPIS",       "vPIS"),
-            ("BC COFINS",  "vBC_cofins"),
-            ("vCOFINS",    "vCOFINS"),
+        # Detecta diferença
+        campos_num = [
+            "BC ICMS","Vlr ICMS","BC ICMS ST","Vlr ICMS ST",
+            "BC IPI","Vlr IPI","BC PIS","Vlr PIS","BC COFINS","Vlr COFINS"
         ]
         tem_diff = any(
-            round(float(antes[k]), 2) != round(float(depois[k]), 2)
-            for _, k in campos_conf
-        )
+            round(_fv(antes.get(k, "0")), 2) != round(_fv(depois.get(k, "0")), 2)
+            for k in campos_num
+        ) or cfop_antes != dados["cfop"]
 
-        if tem_diff:
-            xprod_el = find(prod, "xProd")
-            xprod = xprod_el.text if xprod_el is not None else ""
-            row_conf = {
-                "Arquivo":      nome_arquivo,
-                "Chave":        chave_xml,
-                "nItem":        n_item,
-                "Cod Item":     dados["cod_item"],
-                "Desc Item":    xprod,
-                "CFOP":         dados["cfop"],
-            }
-            for label, k in campos_conf:
-                row_conf[f"{label} (antes)"] = antes[k]
-                row_conf[f"{label} (depois)"] = depois[k]
-                try:
-                    diff = round(float(depois[k]) - float(antes[k]), 2)
-                except Exception:
-                    diff = ""
-                row_conf[f"{label} (diff)"] = diff
-            diferencas.append(row_conf)
+        xprod_el = find(prod, "xProd")
+        xprod = xprod_el.text if xprod_el is not None else ""
+
+        row_conf = {
+            # Identificação
+            "Arquivo":        nome_arquivo,
+            "Chave NF-e":     chave_xml,
+            "Nro Documento":  dados["nro_documento"],
+            "Data Emissão":   dados["data_emissao"],
+            "Data Entrada":   dados["data_entrada"],
+            "Razão Social":   dados["razao_social"],
+            "CNPJ/CPF":       dados["cnpj"],
+            "UF":             dados["uf"],
+            "nItem":          n_item,
+            "Cód Item":       dados["cod_item"],
+            "Desc Item":      xprod,
+            "NCM":            dados["ncm"],
+            "CFOP Antes":     cfop_antes,
+            "CFOP Depois":    dados["cfop"],
+            "Vlr Documento":  fmt(dados["vlr_documento"]),
+            # ICMS
+            "CST ICMS Antes":    antes.get("CST ICMS", ""),
+            "CST ICMS Depois":   depois["CST ICMS"],
+            "BC ICMS Antes":     antes.get("BC ICMS", "0"),
+            "BC ICMS Depois":    depois["BC ICMS"],
+            "% ICMS":            depois["% ICMS"],
+            "Vlr ICMS Antes":    antes.get("Vlr ICMS", "0"),
+            "Vlr ICMS Depois":   depois["Vlr ICMS"],
+            "Diff Vlr ICMS":     round(_fv(depois["Vlr ICMS"]) - _fv(antes.get("Vlr ICMS","0")), 2),
+            # ICMS ST
+            "BC ICMS ST Antes":  antes.get("BC ICMS ST", "0"),
+            "BC ICMS ST Depois": depois["BC ICMS ST"],
+            "Vlr ICMS ST Antes": antes.get("Vlr ICMS ST", "0"),
+            "Vlr ICMS ST Depois":depois["Vlr ICMS ST"],
+            "Diff Vlr ICMS ST":  round(_fv(depois["Vlr ICMS ST"]) - _fv(antes.get("Vlr ICMS ST","0")), 2),
+            # IPI
+            "CST IPI Antes":     antes.get("CST IPI", ""),
+            "CST IPI Depois":    depois["CST IPI"],
+            "BC IPI Antes":      antes.get("BC IPI", "0"),
+            "BC IPI Depois":     depois["BC IPI"],
+            "% IPI":             depois["% IPI"],
+            "Vlr IPI Antes":     antes.get("Vlr IPI", "0"),
+            "Vlr IPI Depois":    depois["Vlr IPI"],
+            "Diff Vlr IPI":      round(_fv(depois["Vlr IPI"]) - _fv(antes.get("Vlr IPI","0")), 2),
+            # PIS
+            "CST PIS Antes":     antes.get("CST PIS", ""),
+            "CST PIS Depois":    depois["CST PIS"],
+            "BC PIS Antes":      antes.get("BC PIS", "0"),
+            "BC PIS Depois":     depois["BC PIS"],
+            "% PIS":             depois["% PIS"],
+            "Vlr PIS Antes":     antes.get("Vlr PIS", "0"),
+            "Vlr PIS Depois":    depois["Vlr PIS"],
+            "Diff Vlr PIS":      round(_fv(depois["Vlr PIS"]) - _fv(antes.get("Vlr PIS","0")), 2),
+            # COFINS
+            "CST COFINS Antes":  antes.get("CST COFINS", ""),
+            "CST COFINS Depois": depois["CST COFINS"],
+            "BC COFINS Antes":   antes.get("BC COFINS", "0"),
+            "BC COFINS Depois":  depois["BC COFINS"],
+            "% COFINS":          depois["% COFINS"],
+            "Vlr COFINS Antes":  antes.get("Vlr COFINS", "0"),
+            "Vlr COFINS Depois": depois["Vlr COFINS"],
+            "Diff Vlr COFINS":   round(_fv(depois["Vlr COFINS"]) - _fv(antes.get("Vlr COFINS","0")), 2),
+            # Flag
+            "Tem Diferença":     "SIM" if tem_diff else "NÃO",
+        }
+        diferencas.append(row_conf)
 
     if not modificado:
         return None, "nenhuma alteração aplicada", "info", []
@@ -519,7 +612,7 @@ def recalcular_totais(inf_nfe):
     if icms_tot is None:
         return
 
-    mapa = {
+    for tag_nome, val in {
         "vBC":      fmt(totais["vBC"]),
         "vICMS":    fmt(totais["vICMS"]),
         "vBCST":    fmt(totais["vBCST"]),
@@ -530,78 +623,173 @@ def recalcular_totais(inf_nfe):
         "vCOFINS":  fmt(totais["vCOFINS"]),
         "vProd":    fmt(totais["vProd"]),
         "vNF":      fmt(totais["vProd"] + totais["vST"] + totais["vIPI"]),
-    }
-    for tag_nome, val in mapa.items():
+    }.items():
         el = find(icms_tot, tag_nome)
         if el is not None:
             el.text = val
 
 
 # ─────────────────────────────────────────────
-# GERA EXCEL DE CONFERÊNCIA
+# EXCEL DE CONFERÊNCIA
 # ─────────────────────────────────────────────
 def gerar_excel_conferencia(todas_diferencas: list) -> bytes:
     if not todas_diferencas:
         return b""
+
     df = pd.DataFrame(todas_diferencas)
-
     buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Diferenças")
-        ws = writer.sheets["Diferenças"]
 
-        from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Conferência")
+        ws = writer.sheets["Conferência"]
+
+        from openpyxl.styles import (
+            PatternFill, Font, Alignment, Border, Side, GradientFill
+        )
         from openpyxl.utils import get_column_letter
 
-        # Cabeçalho vermelho
-        header_fill = PatternFill("solid", fgColor="C8102E")
-        header_font = Font(color="FFFFFF", bold=True, size=10)
-        thin = Side(style="thin", color="CCCCCC")
-        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        # Cores tema TR
+        COR_LARANJA   = "FF8000"
+        COR_CINZA     = "444444"
+        COR_BRANCO    = "FFFFFF"
+        COR_VERDE_BG  = "E2EFDA"
+        COR_VERDE_FT  = "375623"
+        COR_VERM_BG   = "FCE4D6"
+        COR_VERM_FT   = "843C0C"
+        COR_AMARELO   = "FFF2CC"
+        COR_LINHA_PAR = "F5F5F5"
 
+        thin  = Side(style="thin",   color="CCCCCC")
+        thick = Side(style="medium", color=COR_LARANJA)
+        borda_header = Border(left=thick, right=thick, top=thick, bottom=thick)
+        borda_normal = Border(left=thin,  right=thin,  top=thin,  bottom=thin)
+
+        header_fill = PatternFill("solid", fgColor=COR_CINZA)
+        header_font = Font(color=COR_BRANCO, bold=True, size=9,
+                           name="Segoe UI")
+        header_align = Alignment(horizontal="center", vertical="center",
+                                 wrap_text=True)
+
+        # Grupos de colunas para colorir o cabeçalho
+        grupos = {
+            "identificacao": {
+                "cols": ["Arquivo","Chave NF-e","Nro Documento","Data Emissão",
+                         "Data Entrada","Razão Social","CNPJ/CPF","UF",
+                         "nItem","Cód Item","Desc Item","NCM",
+                         "CFOP Antes","CFOP Depois","Vlr Documento"],
+                "cor": "2E4057",
+            },
+            "icms": {
+                "cols": ["CST ICMS Antes","CST ICMS Depois","BC ICMS Antes",
+                         "BC ICMS Depois","% ICMS","Vlr ICMS Antes",
+                         "Vlr ICMS Depois","Diff Vlr ICMS",
+                         "BC ICMS ST Antes","BC ICMS ST Depois",
+                         "Vlr ICMS ST Antes","Vlr ICMS ST Depois",
+                         "Diff Vlr ICMS ST"],
+                "cor": "1F4E79",
+            },
+            "ipi": {
+                "cols": ["CST IPI Antes","CST IPI Depois","BC IPI Antes",
+                         "BC IPI Depois","% IPI","Vlr IPI Antes",
+                         "Vlr IPI Depois","Diff Vlr IPI"],
+                "cor": "375623",
+            },
+            "pis": {
+                "cols": ["CST PIS Antes","CST PIS Depois","BC PIS Antes",
+                         "BC PIS Depois","% PIS","Vlr PIS Antes",
+                         "Vlr PIS Depois","Diff Vlr PIS"],
+                "cor": "7B2C2C",
+            },
+            "cofins": {
+                "cols": ["CST COFINS Antes","CST COFINS Depois","BC COFINS Antes",
+                         "BC COFINS Depois","% COFINS","Vlr COFINS Antes",
+                         "Vlr COFINS Depois","Diff Vlr COFINS"],
+                "cor": "843C0C",
+            },
+            "flag": {
+                "cols": ["Tem Diferença"],
+                "cor": COR_LARANJA,
+            },
+        }
+
+        col_names = list(df.columns)
+        col_grupo = {}
+        for grp, info in grupos.items():
+            for c in info["cols"]:
+                if c in col_names:
+                    col_grupo[col_names.index(c) + 1] = info["cor"]
+
+        # Aplica cabeçalho
         for cell in ws[1]:
-            cell.fill = header_fill
-            cell.font = header_font
-            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-            cell.border = border
+            cor = col_grupo.get(cell.column, COR_CINZA)
+            cell.fill      = PatternFill("solid", fgColor=cor)
+            cell.font      = Font(color=COR_BRANCO, bold=True, size=9, name="Segoe UI")
+            cell.alignment = header_align
+            cell.border    = borda_header
 
-        # Destaca células com diff != 0
-        diff_fill_pos = PatternFill("solid", fgColor="C6EFCE")  # verde
-        diff_fill_neg = PatternFill("solid", fgColor="FFC7CE")  # vermelho
-        diff_font_pos = Font(color="276221", bold=True, size=9)
-        diff_font_neg = Font(color="9C0006", bold=True, size=9)
+        ws.row_dimensions[1].height = 36
 
-        cols_diff = [i+1 for i, c in enumerate(df.columns) if "(diff)" in c]
+        # Colunas diff e flag
+        diff_cols = [i+1 for i, c in enumerate(col_names) if c.startswith("Diff ")]
+        flag_col  = col_names.index("Tem Diferença") + 1 if "Tem Diferença" in col_names else None
 
-        for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+        fill_par = PatternFill("solid", fgColor=COR_LINHA_PAR)
+
+        for row_idx, row in enumerate(
+            ws.iter_rows(min_row=2, max_row=ws.max_row), start=2
+        ):
+            is_par = (row_idx % 2 == 0)
             for cell in row:
-                cell.border = border
-                cell.alignment = Alignment(horizontal="center", vertical="center")
-                cell.font = Font(size=9)
+                cell.border    = borda_normal
+                cell.alignment = Alignment(horizontal="center", vertical="center",
+                                           wrap_text=False)
+                cell.font      = Font(size=9, name="Segoe UI")
+                if is_par:
+                    cell.fill = fill_par
 
-            for col_idx in cols_diff:
+            # Destaca diffs
+            for col_idx in diff_cols:
                 cell = row[col_idx - 1]
                 try:
                     v = float(cell.value or 0)
                     if v > 0:
-                        cell.fill = diff_fill_pos
-                        cell.font = diff_font_pos
+                        cell.fill = PatternFill("solid", fgColor=COR_VERDE_BG)
+                        cell.font = Font(color=COR_VERDE_FT, bold=True, size=9, name="Segoe UI")
                     elif v < 0:
-                        cell.fill = diff_fill_neg
-                        cell.font = diff_font_neg
+                        cell.fill = PatternFill("solid", fgColor=COR_VERM_BG)
+                        cell.font = Font(color=COR_VERM_FT, bold=True, size=9, name="Segoe UI")
                 except Exception:
                     pass
 
-        # Ajusta largura das colunas
-        for col_idx, col in enumerate(ws.iter_cols(min_row=1, max_row=1), start=1):
-            max_len = max(
-                len(str(col[0].value or "")),
-                max((len(str(ws.cell(r, col_idx).value or "")) for r in range(2, ws.max_row + 1)), default=0)
-            )
-            ws.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 3, 30)
+            # Flag "Tem Diferença"
+            if flag_col:
+                cell = row[flag_col - 1]
+                if str(cell.value) == "SIM":
+                    cell.fill = PatternFill("solid", fgColor="FFE0B2")
+                    cell.font = Font(color=COR_LARANJA, bold=True, size=9, name="Segoe UI")
+                else:
+                    cell.fill = PatternFill("solid", fgColor=COR_VERDE_BG)
+                    cell.font = Font(color=COR_VERDE_FT, bold=True, size=9, name="Segoe UI")
 
-        ws.row_dimensions[1].height = 30
+        # Largura das colunas
+        for col_idx in range(1, ws.max_column + 1):
+            col_letter = get_column_letter(col_idx)
+            header_val = str(ws.cell(1, col_idx).value or "")
+            max_len = len(header_val)
+            for row_idx in range(2, min(ws.max_row + 1, 100)):
+                v = str(ws.cell(row_idx, col_idx).value or "")
+                max_len = max(max_len, len(v))
+            ws.column_dimensions[col_letter].width = min(max_len + 3, 35)
+
+        # Colunas de descrição mais largas
+        for col_name in ["Desc Item", "Razão Social", "Arquivo", "Chave NF-e"]:
+            if col_name in col_names:
+                ws.column_dimensions[
+                    get_column_letter(col_names.index(col_name) + 1)
+                ].width = 40
+
         ws.freeze_panes = "A2"
+        ws.auto_filter.ref = ws.dimensions
 
     buf.seek(0)
     return buf.read()
@@ -611,22 +799,19 @@ def gerar_excel_conferencia(todas_diferencas: list) -> bytes:
 # INTERFACE
 # ─────────────────────────────────────────────
 
-# 1 — XLSX
 st.markdown('<div class="section-card"><div class="section-title">📂 1. Arquivo de Entrada (XLSX — Domínio Sistemas)</div>', unsafe_allow_html=True)
 arquivo_xlsx = st.file_uploader("Selecione o arquivo .xlsx exportado do Domínio", type=["xlsx"], key="xlsx")
 st.markdown('</div>', unsafe_allow_html=True)
 
-# 2 — XMLs
 st.markdown('<div class="section-card"><div class="section-title">📄 2. Arquivos XML de NF-e</div>', unsafe_allow_html=True)
 arquivos_xml = st.file_uploader(
-    "Selecione um ou mais XMLs ou um arquivo ZIP contendo XMLs",
+    "Selecione XMLs ou um arquivo ZIP contendo XMLs",
     type=["xml", "zip"],
     accept_multiple_files=True,
     key="xmls"
 )
 st.markdown('</div>', unsafe_allow_html=True)
 
-# 3 — CFOPs
 st.markdown('<div class="section-card"><div class="section-title">🔢 3. CFOPs a Processar</div>', unsafe_allow_html=True)
 
 CFOPS_DEFAULT = ["1201","1202","1410","1411","2201","2202","2410","2411","1949","2949","2603"]
@@ -637,11 +822,8 @@ if "cfops_lista" not in st.session_state:
 col_inp, col_add = st.columns([3, 1])
 with col_inp:
     nova_cfop = st.text_input(
-        "Adicionar CFOP (4 dígitos):",
-        max_chars=4,
-        placeholder="ex: 1410",
-        key="nova_cfop_input",
-        label_visibility="collapsed",
+        "CFOP", max_chars=4, placeholder="ex: 1410",
+        key="nova_cfop_input", label_visibility="collapsed"
     )
 with col_add:
     if st.button("➕ Adicionar", key="btn_add_cfop"):
@@ -654,38 +836,33 @@ with col_add:
         else:
             st.info(f"CFOP {cfop_clean} já está na lista.")
 
-# Exibe CFOPs com botão de remover individual
-cfops_para_remover = []
 if st.session_state["cfops_lista"]:
-    cols_cfop = st.columns(min(len(st.session_state["cfops_lista"]), 8))
+    cfops_para_remover = []
+    n_cols = min(len(st.session_state["cfops_lista"]), 10)
+    cols_cfop = st.columns(n_cols)
     for i, cfop in enumerate(st.session_state["cfops_lista"]):
-        with cols_cfop[i % 8]:
-            if st.button(f"❌ {cfop}", key=f"rm_{cfop}_{i}", help=f"Remover CFOP {cfop}"):
+        with cols_cfop[i % n_cols]:
+            if st.button(f"❌ {cfop}", key=f"rm_{cfop}_{i}", help=f"Remover {cfop}"):
                 cfops_para_remover.append(cfop)
+    if cfops_para_remover:
+        for c in cfops_para_remover:
+            if c in st.session_state["cfops_lista"]:
+                st.session_state["cfops_lista"].remove(c)
+        st.rerun()
 
-if cfops_para_remover:
-    for c in cfops_para_remover:
-        if c in st.session_state["cfops_lista"]:
-            st.session_state["cfops_lista"].remove(c)
-    st.rerun()
-
-# Remover em lote
 col_lote, col_reset = st.columns([3, 1])
 with col_lote:
     remover_lote = st.text_input(
-        "Remover CFOPs em lote (separadas por vírgula):",
-        placeholder="ex: 1949, 2949, 2603",
-        key="remover_lote_input",
-        label_visibility="collapsed",
+        "Remover em lote", placeholder="ex: 1949, 2949",
+        key="remover_lote_input", label_visibility="collapsed"
     )
 with col_reset:
-    if st.button("🔄 Restaurar padrão", key="btn_reset_cfop"):
+    if st.button("🔄 Restaurar padrão", key="btn_reset"):
         st.session_state["cfops_lista"] = list(CFOPS_DEFAULT)
         st.rerun()
 
-if st.button("🗑️ Remover em lote", key="btn_remover_lote"):
-    cfops_lote = [re.sub(r"[^0-9]", "", c.strip()) for c in remover_lote.split(",") if c.strip()]
-    for c in cfops_lote:
+if st.button("🗑️ Remover em lote", key="btn_rm_lote"):
+    for c in [re.sub(r"[^0-9]", "", x.strip()) for x in remover_lote.split(",") if x.strip()]:
         if c in st.session_state["cfops_lista"]:
             st.session_state["cfops_lista"].remove(c)
     st.rerun()
@@ -693,10 +870,9 @@ if st.button("🗑️ Remover em lote", key="btn_remover_lote"):
 st.caption(f"CFOPs ativas: **{', '.join(sorted(st.session_state['cfops_lista'])) or 'Nenhuma'}**")
 st.markdown('</div>', unsafe_allow_html=True)
 
-# 4 — Processar
 st.markdown('<div class="section-card"><div class="section-title">▶️ 4. Processar</div>', unsafe_allow_html=True)
 
-if st.button("▶️ Processar XMLs", type="primary", key="btn_processar"):
+if st.button("▶ Processar XMLs", type="primary", key="btn_processar"):
     if not arquivo_xlsx:
         st.error("❌ Selecione o arquivo XLSX.")
         st.stop()
@@ -713,13 +889,13 @@ if st.button("▶️ Processar XMLs", type="primary", key="btn_processar"):
         dados_indexados = ler_xlsx(arquivo_xlsx.read())
 
     if not dados_indexados:
-        st.error("❌ Nenhum item válido encontrado no XLSX.")
+        st.error("❌ Nenhum item válido no XLSX.")
         st.stop()
 
     col_a, col_b, col_c = st.columns(3)
     col_a.metric("📊 Itens indexados", len(dados_indexados))
-    col_b.metric("🔢 CFOPs ativas", len(cfops_ativas))
-    col_c.metric("📁 Arquivos recebidos", len(arquivos_xml))
+    col_b.metric("🔢 CFOPs ativas",    len(cfops_ativas))
+    col_c.metric("📁 Arquivos",        len(arquivos_xml))
 
     with st.expander("🔍 Debug — primeiros 5 itens indexados"):
         for i, ((ch, seq), d) in enumerate(list(dados_indexados.items())[:5]):
@@ -730,7 +906,7 @@ if st.button("▶️ Processar XMLs", type="primary", key="btn_processar"):
                 f"BC PIS/COFINS: {d['bc_pis_cofins']}"
             )
 
-    # Coleta XMLs (suporta ZIP)
+    # Coleta XMLs
     xmls_para_processar = {}
     for arq in arquivos_xml:
         if arq.name.lower().endswith(".zip"):
@@ -741,11 +917,11 @@ if st.button("▶️ Processar XMLs", type="primary", key="btn_processar"):
         else:
             xmls_para_processar[arq.name] = arq.read()
 
-    resultados = []
+    resultados       = []
     xmls_modificados = {}
     todas_diferencas = []
     progress = st.progress(0)
-    total = len(xmls_para_processar)
+    total    = len(xmls_para_processar)
 
     for idx, (nome_arq, conteudo) in enumerate(xmls_para_processar.items()):
         xml_out, msg, status, diffs = processar_xml(
@@ -759,16 +935,16 @@ if st.button("▶️ Processar XMLs", type="primary", key="btn_processar"):
 
     progress.empty()
 
-    # Resumo
     ok_c   = sum(1 for _, _, s in resultados if s == "ok")
     info_c = sum(1 for _, _, s in resultados if s == "info")
     err_c  = sum(1 for _, _, s in resultados if s == "erro")
+    diff_c = sum(1 for r in todas_diferencas if r.get("Tem Diferença") == "SIM")
 
     col_x, col_y, col_z, col_w = st.columns(4)
-    col_x.metric("✅ Alterados",     ok_c)
-    col_y.metric("ℹ️ Sem alteração", info_c)
-    col_z.metric("❌ Erros",         err_c)
-    col_w.metric("📋 Itens c/ diff", len(todas_diferencas))
+    col_x.metric("✅ Alterados",      ok_c)
+    col_y.metric("ℹ️ Sem alteração",  info_c)
+    col_z.metric("❌ Erros",          err_c)
+    col_w.metric("📋 Itens c/ diff",  diff_c)
 
     st.subheader("Resultados por Arquivo")
     for nome, msg, status in resultados:
@@ -781,14 +957,15 @@ if st.button("▶️ Processar XMLs", type="primary", key="btn_processar"):
 
     # Download XMLs
     if xmls_modificados:
-        st.subheader("⬇️ Download XMLs")
+        st.subheader("⬇️ Download XMLs Alterados")
         if len(xmls_modificados) == 1:
             nome_arq, conteudo_arq = list(xmls_modificados.items())[0]
             st.download_button(
-                label=f"⬇️ Baixar {nome_arq}",
+                label=f"⬇ Baixar {nome_arq}",
                 data=conteudo_arq,
                 file_name=nome_arq,
                 mime="application/xml",
+                use_container_width=True,
             )
         else:
             buf = io.BytesIO()
@@ -797,10 +974,11 @@ if st.button("▶️ Processar XMLs", type="primary", key="btn_processar"):
                     zf.writestr(nome_arq, conteudo_arq)
             buf.seek(0)
             st.download_button(
-                label=f"⬇️ Baixar todos ({len(xmls_modificados)} XMLs) como ZIP",
+                label=f"⬇ Baixar todos ({len(xmls_modificados)} XMLs) como ZIP",
                 data=buf,
                 file_name="xmls_modificados_dni.zip",
                 mime="application/zip",
+                use_container_width=True,
             )
 
     # Download Excel de Conferência
@@ -808,14 +986,14 @@ if st.button("▶️ Processar XMLs", type="primary", key="btn_processar"):
         st.subheader("📊 Excel de Conferência")
         excel_bytes = gerar_excel_conferencia(todas_diferencas)
         st.download_button(
-            label=f"📥 Baixar Excel de Conferência ({len(todas_diferencas)} itens com diferença)",
+            label=f"⬇ Baixar Excel de Conferência ({len(todas_diferencas)} itens processados / {diff_c} com diferença)",
             data=excel_bytes,
-            file_name="conferencia_diferencas_dni.xlsx",
+            file_name="conferencia_nfe_dni.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
         )
     else:
-        if xmls_modificados:
-            st.info("✅ Nenhuma diferença detectada entre os valores originais e os do XLSX.")
+        st.info("ℹ️ Nenhum item processado para conferência.")
 
     if not xmls_modificados:
         st.warning("⚠️ Nenhum XML foi modificado.")
@@ -824,6 +1002,6 @@ st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown("""
 <div class="footer">
-    Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v3.0 · DNI
+    Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v4.0 · DNI
 </div>
 """, unsafe_allow_html=True)
