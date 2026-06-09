@@ -53,7 +53,8 @@ def _init_state():
         "cfop_catalogo": dict(CATALOGO_PADRAO),
         "cfop_ativos": set(ATIVOS_PADRAO),
         "resultado_excel_bytes": None,
-        "resultado_xmls": {},
+        "resultado_xmls_modificados": {},   # {nome: bytes} — apenas os alterados
+        "resultado_xmls_originais": {},     # {nome: bytes} — todos os originais
         "resultado_log": [],
         "resultado_metricas": None,
         "resultado_diferencas": [],
@@ -65,7 +66,8 @@ def _init_state():
 
 def _limpar_resultados():
     st.session_state.resultado_excel_bytes = None
-    st.session_state.resultado_xmls = {}
+    st.session_state.resultado_xmls_modificados = {}
+    st.session_state.resultado_xmls_originais = {}
     st.session_state.resultado_log = []
     st.session_state.resultado_metricas = None
     st.session_state.resultado_diferencas = []
@@ -151,7 +153,7 @@ def render_sidebar():
         st.caption(f"Catálogo: {total} | Ativos: {ativos} | Inativos: {total - ativos}")
         st.markdown("---")
         st.markdown("**Thomson Reuters · Domínio Sistemas**")
-        st.markdown("**Enriquecedor NF-e v7.6**")
+        st.markdown("**Enriquecedor NF-e v7.7**")
 
 # ── Helpers gerais ─────────────────────────────────────────────────────────────
 def limpar_chave(valor: str) -> str:
@@ -178,14 +180,6 @@ def safe_int_cst(val) -> str:
     if s.lower() in ("nan", "none", ""): return "00"
     try: return str(int(float(s))).zfill(2)
     except Exception: return "00"
-
-def to_float(v) -> float:
-    """Converte qualquer valor para float seguro."""
-    try:
-        if pd.isna(v): return 0.0
-    except Exception: pass
-    try: return round(float(str(v).replace(",", ".")), 2)
-    except Exception: return 0.0
 
 # ── Leitura XLSX ───────────────────────────────────────────────────────────────
 def ler_xlsx(conteudo_bytes: bytes) -> dict:
@@ -402,7 +396,6 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas_xlsx
 
         cfop_xml_original = _get(prod, "CFOP")
 
-        # Coleta ANTES
         antes = {}
         icms_pai = find(imposto, "ICMS")
         if icms_pai:
@@ -437,21 +430,17 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas_xlsx
         antes["pDevol"]    = _get(imp_devol_el, "pDevol")           if imp_devol_el is not None else "0"
         antes["vIPIDevol"] = _get(imp_devol_el, "IPI", "vIPIDevol") if imp_devol_el is not None else "0"
 
-        # NCM
         el_ncm = find(prod, "NCM")
         if el_ncm is not None and dados["ncm"]: el_ncm.text = dados["ncm"]; modificado = True
 
-        # ICMS
         if icms_pai is not None:
             for icms_f in icms_pai:
                 if local(icms_f).startswith("ICMS"):
                     if aplicar_icms(icms_f, dados): modificado = True
                     break
 
-        # IPI + impostoDevol
         if aplicar_ipi(imposto, det, dados): modificado = True
 
-        # PIS
         pis_pai = find(imposto, "PIS")
         if pis_pai is not None:
             for pf in pis_pai:
@@ -461,7 +450,6 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas_xlsx
                     if el is not None: el.text = tv; modificado = True
                 break
 
-        # COFINS
         cof_pai = find(imposto, "COFINS")
         if cof_pai is not None:
             for cf in cof_pai:
@@ -471,7 +459,6 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas_xlsx
                     if el is not None: el.text = tv; modificado = True
                 break
 
-        # Coleta DEPOIS
         depois = {
             "CST ICMS": dados["cst_icms"], "BC ICMS": dados["base_icms"],
             "% ICMS": dados["perc_icms"],  "Vlr ICMS": dados["vlr_icms"],
@@ -495,7 +482,6 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas_xlsx
         xprod_el = find(prod, "xProd")
         xprod    = xprod_el.text if xprod_el is not None else ""
 
-        # ── Linha do relatório — todos os valores numéricos como float ──
         row_conf = {
             "Arquivo":                   nome_arquivo,
             "Chave NF-e":                chave_xml,
@@ -620,208 +606,163 @@ def recalcular_totais(inf_nfe):
         if el is not None: el.text = tv
 
 # ── Excel de Conferência ───────────────────────────────────────────────────────
-# Colunas numéricas que receberão totalizador e formato número
 COLUNAS_NUMERICAS = [
     "Vlr Documento",
-    "BC ICMS Antes", "BC ICMS Depois", "% ICMS",
-    "Vlr ICMS Antes", "Vlr ICMS Depois", "Diff Vlr ICMS",
-    "BC ICMS ST Antes", "BC ICMS ST Depois",
-    "Vlr ICMS ST Antes", "Vlr ICMS ST Depois", "Diff Vlr ICMS ST",
-    "BC IPI Antes", "BC IPI Depois", "% IPI",
-    "Vlr IPI Antes", "Vlr IPI Depois", "Diff Vlr IPI",
-    "pDevol Antes", "pDevol Depois",
-    "vIPIDevol Antes", "vIPIDevol Depois", "Diff vIPIDevol",
-    "BC PIS Antes", "BC PIS Depois", "% PIS",
-    "Vlr PIS Antes", "Vlr PIS Depois", "Diff Vlr PIS",
-    "BC COFINS Antes", "BC COFINS Depois", "% COFINS",
-    "Vlr COFINS Antes", "Vlr COFINS Depois", "Diff Vlr COFINS",
+    "BC ICMS Antes","BC ICMS Depois","% ICMS","Vlr ICMS Antes","Vlr ICMS Depois","Diff Vlr ICMS",
+    "BC ICMS ST Antes","BC ICMS ST Depois","Vlr ICMS ST Antes","Vlr ICMS ST Depois","Diff Vlr ICMS ST",
+    "BC IPI Antes","BC IPI Depois","% IPI","Vlr IPI Antes","Vlr IPI Depois","Diff Vlr IPI",
+    "pDevol Antes","pDevol Depois","vIPIDevol Antes","vIPIDevol Depois","Diff vIPIDevol",
+    "BC PIS Antes","BC PIS Depois","% PIS","Vlr PIS Antes","Vlr PIS Depois","Diff Vlr PIS",
+    "BC COFINS Antes","BC COFINS Depois","% COFINS","Vlr COFINS Antes","Vlr COFINS Depois","Diff Vlr COFINS",
 ]
 
 def gerar_excel_conferencia(todas_diferencas: list) -> bytes:
     if not todas_diferencas: return b""
-
-    df  = pd.DataFrame(todas_diferencas)
-
-    # Garante que colunas numéricas sejam float
+    df = pd.DataFrame(todas_diferencas)
     for col in COLUNAS_NUMERICAS:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Conferência")
         ws = writer.sheets["Conferência"]
-
         from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
         from openpyxl.utils import get_column_letter
-
-        COR_LARANJA  = "FF8000"
-        COR_CINZA    = "444444"
-        COR_BRANCO   = "FFFFFF"
-        COR_VERDE_BG = "E2EFDA"
-        COR_VERDE_FT = "375623"
-        COR_VERM_BG  = "FCE4D6"
-        COR_VERM_FT  = "843C0C"
-        COR_PAR      = "F9F9F9"
-        COR_TOTAL_BG = "444444"
-        COR_TOTAL_FT = "FF8000"
-
-        thin  = Side(style="thin",   color="CCCCCC")
-        thick = Side(style="medium", color=COR_LARANJA)
-        b_hdr = Border(left=thick, right=thick, top=thick, bottom=thick)
-        b_nrm = Border(left=thin,  right=thin,  top=thin,  bottom=thin)
-        b_tot = Border(left=thick, right=thick, top=thick, bottom=thick)
-
+        COR_LARANJA="FF8000"; COR_CINZA="444444"; COR_BRANCO="FFFFFF"
+        COR_VERDE_BG="E2EFDA"; COR_VERDE_FT="375623"
+        COR_VERM_BG="FCE4D6"; COR_VERM_FT="843C0C"
+        COR_PAR="F9F9F9"; COR_TOTAL_BG="444444"; COR_TOTAL_FT="FF8000"
+        thin=Side(style="thin",color="CCCCCC"); thick=Side(style="medium",color=COR_LARANJA)
+        b_hdr=Border(left=thick,right=thick,top=thick,bottom=thick)
+        b_nrm=Border(left=thin,right=thin,top=thin,bottom=thin)
+        b_tot=Border(left=thick,right=thick,top=thick,bottom=thick)
         grupos = {
-            "id":     {"cols": ["Arquivo","Chave NF-e","Nro Documento","Data Emissão",
-                                "Data Entrada","Razão Social","CNPJ/CPF","UF","nItem",
-                                "Cód Item","Desc Item","NCM",
-                                "CFOP XML (origem)","CFOP XLSX (DNI/entrada)",
-                                "Vlr Documento"], "cor": "2E4057"},
-            "icms":   {"cols": ["CST ICMS Antes","CST ICMS Depois","BC ICMS Antes",
-                                "BC ICMS Depois","% ICMS","Vlr ICMS Antes","Vlr ICMS Depois",
-                                "Diff Vlr ICMS","BC ICMS ST Antes","BC ICMS ST Depois",
-                                "Vlr ICMS ST Antes","Vlr ICMS ST Depois","Diff Vlr ICMS ST"],
-                       "cor": "1F4E79"},
-            "ipi":    {"cols": ["CST IPI Antes","CST IPI Depois","BC IPI Antes",
-                                "BC IPI Depois","% IPI","Vlr IPI Antes","Vlr IPI Depois",
-                                "Diff Vlr IPI"], "cor": "375623"},
-            "devol":  {"cols": ["pDevol Antes","pDevol Depois",
-                                "vIPIDevol Antes","vIPIDevol Depois","Diff vIPIDevol"],
-                       "cor": "7B3F00"},
-            "pis":    {"cols": ["CST PIS Antes","CST PIS Depois","BC PIS Antes",
-                                "BC PIS Depois","% PIS","Vlr PIS Antes","Vlr PIS Depois",
-                                "Diff Vlr PIS"], "cor": "7B2C2C"},
-            "cofins": {"cols": ["CST COFINS Antes","CST COFINS Depois","BC COFINS Antes",
-                                "BC COFINS Depois","% COFINS","Vlr COFINS Antes",
-                                "Vlr COFINS Depois","Diff Vlr COFINS"], "cor": "843C0C"},
-            "flag":   {"cols": ["Tem Diferença"], "cor": COR_LARANJA},
+            "id":     {"cols":["Arquivo","Chave NF-e","Nro Documento","Data Emissão","Data Entrada",
+                               "Razão Social","CNPJ/CPF","UF","nItem","Cód Item","Desc Item","NCM",
+                               "CFOP XML (origem)","CFOP XLSX (DNI/entrada)","Vlr Documento"],"cor":"2E4057"},
+            "icms":   {"cols":["CST ICMS Antes","CST ICMS Depois","BC ICMS Antes","BC ICMS Depois",
+                               "% ICMS","Vlr ICMS Antes","Vlr ICMS Depois","Diff Vlr ICMS",
+                               "BC ICMS ST Antes","BC ICMS ST Depois","Vlr ICMS ST Antes",
+                               "Vlr ICMS ST Depois","Diff Vlr ICMS ST"],"cor":"1F4E79"},
+            "ipi":    {"cols":["CST IPI Antes","CST IPI Depois","BC IPI Antes","BC IPI Depois",
+                               "% IPI","Vlr IPI Antes","Vlr IPI Depois","Diff Vlr IPI"],"cor":"375623"},
+            "devol":  {"cols":["pDevol Antes","pDevol Depois","vIPIDevol Antes","vIPIDevol Depois",
+                               "Diff vIPIDevol"],"cor":"7B3F00"},
+            "pis":    {"cols":["CST PIS Antes","CST PIS Depois","BC PIS Antes","BC PIS Depois",
+                               "% PIS","Vlr PIS Antes","Vlr PIS Depois","Diff Vlr PIS"],"cor":"7B2C2C"},
+            "cofins": {"cols":["CST COFINS Antes","CST COFINS Depois","BC COFINS Antes","BC COFINS Depois",
+                               "% COFINS","Vlr COFINS Antes","Vlr COFINS Depois","Diff Vlr COFINS"],"cor":"843C0C"},
+            "flag":   {"cols":["Tem Diferença"],"cor":COR_LARANJA},
         }
-
         col_names = list(df.columns)
         col_grupo = {}
         for grp, info in grupos.items():
             for c in info["cols"]:
                 if c in col_names:
-                    col_grupo[col_names.index(c) + 1] = info["cor"]
-
-        # Cabeçalho
+                    col_grupo[col_names.index(c)+1] = info["cor"]
         for cell in ws[1]:
             cor = col_grupo.get(cell.column, COR_CINZA)
-            cell.fill      = PatternFill("solid", fgColor=cor)
-            cell.font      = Font(color=COR_BRANCO, bold=True, size=9, name="Segoe UI")
-            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-            cell.border    = b_hdr
-        ws.row_dimensions[1].height = 36
-
-        diff_cols = [i+1 for i, c in enumerate(col_names) if c.startswith("Diff ")]
-        flag_col  = col_names.index("Tem Diferença") + 1 if "Tem Diferença" in col_names else None
-        fill_par  = PatternFill("solid", fgColor=COR_PAR)
-
-        # Índices das colunas numéricas (1-based)
-        num_col_indices = {col_names.index(c) + 1: c for c in COLUNAS_NUMERICAS if c in col_names}
-
-        # Formato número para Excel (separador de milhar, 2 casas decimais)
-        NUM_FMT = '#,##0.00'
-
-        # Linhas de dados
-        for row_idx, row in enumerate(ws.iter_rows(min_row=2, max_row=ws.max_row), start=2):
-            is_par = (row_idx % 2 == 0)
+            cell.fill=PatternFill("solid",fgColor=cor)
+            cell.font=Font(color=COR_BRANCO,bold=True,size=9,name="Segoe UI")
+            cell.alignment=Alignment(horizontal="center",vertical="center",wrap_text=True)
+            cell.border=b_hdr
+        ws.row_dimensions[1].height=36
+        diff_cols=[i+1 for i,c in enumerate(col_names) if c.startswith("Diff ")]
+        flag_col=col_names.index("Tem Diferença")+1 if "Tem Diferença" in col_names else None
+        fill_par=PatternFill("solid",fgColor=COR_PAR)
+        num_col_indices={col_names.index(c)+1:c for c in COLUNAS_NUMERICAS if c in col_names}
+        NUM_FMT='#,##0.00'
+        for row_idx, row in enumerate(ws.iter_rows(min_row=2,max_row=ws.max_row),start=2):
+            is_par=(row_idx%2==0)
             for cell in row:
-                cell.border    = b_nrm
-                cell.alignment = Alignment(horizontal="center", vertical="center")
-                cell.font      = Font(size=9, name="Segoe UI")
-                if is_par: cell.fill = fill_par
-                # Aplica formato numérico
+                cell.border=b_nrm
+                cell.alignment=Alignment(horizontal="center",vertical="center")
+                cell.font=Font(size=9,name="Segoe UI")
+                if is_par: cell.fill=fill_par
                 if cell.column in num_col_indices:
-                    cell.number_format = NUM_FMT
-                    cell.alignment = Alignment(horizontal="right", vertical="center")
-
+                    cell.number_format=NUM_FMT
+                    cell.alignment=Alignment(horizontal="right",vertical="center")
             for col_idx in diff_cols:
-                cell = row[col_idx - 1]
+                cell=row[col_idx-1]
                 try:
-                    v = float(cell.value or 0)
-                    if v > 0:
-                        cell.fill = PatternFill("solid", fgColor=COR_VERDE_BG)
-                        cell.font = Font(color=COR_VERDE_FT, bold=True, size=9, name="Segoe UI")
-                    elif v < 0:
-                        cell.fill = PatternFill("solid", fgColor=COR_VERM_BG)
-                        cell.font = Font(color=COR_VERM_FT, bold=True, size=9, name="Segoe UI")
+                    v=float(cell.value or 0)
+                    if v>0:
+                        cell.fill=PatternFill("solid",fgColor=COR_VERDE_BG)
+                        cell.font=Font(color=COR_VERDE_FT,bold=True,size=9,name="Segoe UI")
+                    elif v<0:
+                        cell.fill=PatternFill("solid",fgColor=COR_VERM_BG)
+                        cell.font=Font(color=COR_VERM_FT,bold=True,size=9,name="Segoe UI")
                 except Exception: pass
-
             if flag_col:
-                cell = row[flag_col - 1]
-                if str(cell.value) == "SIM":
-                    cell.fill = PatternFill("solid", fgColor="FFE0B2")
-                    cell.font = Font(color=COR_LARANJA, bold=True, size=9, name="Segoe UI")
+                cell=row[flag_col-1]
+                if str(cell.value)=="SIM":
+                    cell.fill=PatternFill("solid",fgColor="FFE0B2")
+                    cell.font=Font(color=COR_LARANJA,bold=True,size=9,name="Segoe UI")
                 else:
-                    cell.fill = PatternFill("solid", fgColor=COR_VERDE_BG)
-                    cell.font = Font(color=COR_VERDE_FT, bold=True, size=9, name="Segoe UI")
+                    cell.fill=PatternFill("solid",fgColor=COR_VERDE_BG)
+                    cell.font=Font(color=COR_VERDE_FT,bold=True,size=9,name="Segoe UI")
 
-        # ── Linha de TOTALIZADOR ──────────────────────────────────────────────
-        total_row_idx = ws.max_row + 1
-        fill_total    = PatternFill("solid", fgColor=COR_TOTAL_BG)
-        font_total    = Font(color=COR_TOTAL_FT, bold=True, size=9, name="Segoe UI")
-        font_total_w  = Font(color=COR_BRANCO,   bold=True, size=9, name="Segoe UI")
-
-        first_data_row = 2
-        last_data_row  = ws.max_row  # antes de adicionar a linha de total
-
-        for col_idx in range(1, ws.max_column + 1):
-            cell = ws.cell(row=total_row_idx, column=col_idx)
-            cell.fill   = fill_total
-            cell.border = b_tot
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-
-            col_name = col_names[col_idx - 1] if col_idx <= len(col_names) else ""
-
-            if col_idx == 1:
-                # Primeira coluna: rótulo "TOTAL"
-                cell.value         = "TOTAL"
-                cell.font          = font_total
-                cell.alignment     = Alignment(horizontal="center", vertical="center")
+        # Linha de totalizador
+        total_row_idx=ws.max_row+1
+        fill_total=PatternFill("solid",fgColor=COR_TOTAL_BG)
+        font_total=Font(color=COR_TOTAL_FT,bold=True,size=9,name="Segoe UI")
+        font_total_w=Font(color=COR_BRANCO,bold=True,size=9,name="Segoe UI")
+        first_data_row=2; last_data_row=ws.max_row
+        for col_idx in range(1,ws.max_column+1):
+            cell=ws.cell(row=total_row_idx,column=col_idx)
+            cell.fill=fill_total; cell.border=b_tot
+            cell.alignment=Alignment(horizontal="center",vertical="center")
+            col_name=col_names[col_idx-1] if col_idx<=len(col_names) else ""
+            if col_idx==1:
+                cell.value="TOTAL"; cell.font=font_total
             elif col_idx in num_col_indices:
-                # Fórmula de soma para colunas numéricas
-                col_letter = get_column_letter(col_idx)
-                cell.value         = f"=SUM({col_letter}{first_data_row}:{col_letter}{last_data_row})"
-                cell.number_format = NUM_FMT
-                cell.font          = font_total
-                cell.alignment     = Alignment(horizontal="right", vertical="center")
-            elif col_name == "nItem":
-                # Contagem de itens
-                col_letter = get_column_letter(col_idx)
-                cell.value         = f"=COUNTA({col_letter}{first_data_row}:{col_letter}{last_data_row})"
-                cell.font          = font_total_w
-                cell.alignment     = Alignment(horizontal="center", vertical="center")
-            elif col_name == "Tem Diferença":
-                # Contagem de SIM
-                col_letter = get_column_letter(col_idx)
-                cell.value         = f'=COUNTIF({col_letter}{first_data_row}:{col_letter}{last_data_row},"SIM")'
-                cell.font          = font_total
-                cell.alignment     = Alignment(horizontal="center", vertical="center")
+                col_letter=get_column_letter(col_idx)
+                cell.value=f"=SUM({col_letter}{first_data_row}:{col_letter}{last_data_row})"
+                cell.number_format=NUM_FMT; cell.font=font_total
+                cell.alignment=Alignment(horizontal="right",vertical="center")
+            elif col_name=="nItem":
+                col_letter=get_column_letter(col_idx)
+                cell.value=f"=COUNTA({col_letter}{first_data_row}:{col_letter}{last_data_row})"
+                cell.font=font_total_w
+            elif col_name=="Tem Diferença":
+                col_letter=get_column_letter(col_idx)
+                cell.value=f'=COUNTIF({col_letter}{first_data_row}:{col_letter}{last_data_row},"SIM")'
+                cell.font=font_total
             else:
-                cell.value = ""
-                cell.font  = font_total_w
+                cell.value=""; cell.font=font_total_w
+        ws.row_dimensions[total_row_idx].height=20
 
-        ws.row_dimensions[total_row_idx].height = 20
-
-        # Largura das colunas
-        for col_idx in range(1, ws.max_column + 1):
-            col_letter = get_column_letter(col_idx)
-            max_len    = len(str(ws.cell(1, col_idx).value or ""))
-            for r in range(2, min(last_data_row + 2, 300)):
-                v = str(ws.cell(r, col_idx).value or "")
-                max_len = max(max_len, len(v))
-            ws.column_dimensions[col_letter].width = min(max_len + 3, 40)
-
-        for cn in ["Desc Item","Razão Social","Arquivo","Chave NF-e",
-                   "CFOP XML (origem)","CFOP XLSX (DNI/entrada)"]:
+        for col_idx in range(1,ws.max_column+1):
+            col_letter=get_column_letter(col_idx)
+            max_len=len(str(ws.cell(1,col_idx).value or ""))
+            for r in range(2,min(last_data_row+2,300)):
+                v=str(ws.cell(r,col_idx).value or "")
+                max_len=max(max_len,len(v))
+            ws.column_dimensions[col_letter].width=min(max_len+3,40)
+        for cn in ["Desc Item","Razão Social","Arquivo","Chave NF-e","CFOP XML (origem)","CFOP XLSX (DNI/entrada)"]:
             if cn in col_names:
-                ws.column_dimensions[get_column_letter(col_names.index(cn) + 1)].width = 30
+                ws.column_dimensions[get_column_letter(col_names.index(cn)+1)].width=30
+        ws.freeze_panes="A2"
+        ws.auto_filter.ref=f"A1:{get_column_letter(ws.max_column)}{last_data_row}"
+    buf.seek(0)
+    return buf.read()
 
-        ws.freeze_panes = "A2"
-        ws.auto_filter.ref = f"A1:{get_column_letter(ws.max_column)}{last_data_row}"
-
+# ── ZIP final com TODOS os XMLs (modificados + originais não alterados) ────────
+def gerar_zip_completo(xmls_modificados: dict, xmls_originais: dict) -> bytes:
+    """
+    Monta um ZIP com:
+    - XMLs modificados (versão processada)
+    - XMLs originais que não foram modificados (passados sem alteração)
+    Subpastas: modificados/ e originais/
+    """
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        nomes_modificados = set(xmls_modificados.keys())
+        for nome, conteudo in xmls_modificados.items():
+            zf.writestr(f"modificados/{nome}", conteudo)
+        for nome, conteudo in xmls_originais.items():
+            if nome not in nomes_modificados:
+                zf.writestr(f"nao_alterados/{nome}", conteudo)
     buf.seek(0)
     return buf.read()
 
@@ -839,13 +780,20 @@ def render_resultados():
             _limpar_resultados(); st.rerun()
 
     st.markdown("")
-    col_x, col_y, col_z, col_w = st.columns(4)
-    col_x.metric("✅ Alterados",     m["ok"])
-    col_y.metric("ℹ️ Sem alteração", m["info"])
-    col_z.metric("❌ Erros",         m["erro"])
-    col_w.metric("📋 Itens c/ diff", m["diff"])
+    col_x, col_y, col_z, col_w, col_v = st.columns(5)
+    col_x.metric("✅ Alterados",        m["ok"])
+    col_y.metric("ℹ️ Sem alteração",    m["info"])
+    col_z.metric("❌ Erros",            m["erro"])
+    col_w.metric("📋 Itens c/ diff",    m["diff"])
+    col_v.metric("📦 Total de XMLs",    m["total_xmls"])
 
     st.divider()
+
+    xmls_mod  = st.session_state.resultado_xmls_modificados
+    xmls_orig = st.session_state.resultado_xmls_originais
+    total_mod = len(xmls_mod)
+    total_nao = len(xmls_orig) - total_mod
+
     col_dl1, col_dl2 = st.columns(2)
 
     with col_dl1:
@@ -864,23 +812,34 @@ def render_resultados():
             st.info("ℹ️ Nenhum item processado para conferência.")
 
     with col_dl2:
-        xmls = st.session_state.resultado_xmls
-        if xmls:
-            if len(xmls) == 1:
-                nome_arq, conteudo_arq = list(xmls.items())[0]
-                st.download_button(label=f"⬇ Baixar XML: {nome_arq}", data=conteudo_arq,
-                                   file_name=nome_arq, mime="application/xml",
-                                   use_container_width=True, key="dl_xml_unico_resultado")
-            else:
-                buf = io.BytesIO()
-                with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                    for nome_arq, conteudo_arq in xmls.items(): zf.writestr(nome_arq, conteudo_arq)
-                buf.seek(0)
-                st.download_button(label=f"⬇ Baixar {len(xmls)} XMLs (ZIP)", data=buf.read(),
-                                   file_name="xmls_modificados_dni.zip", mime="application/zip",
-                                   use_container_width=True, key="dl_zip_resultado")
+        if xmls_orig:
+            zip_completo = gerar_zip_completo(xmls_mod, xmls_orig)
+            st.download_button(
+                label=(
+                    f"⬇ Baixar ZIP completo "
+                    f"({total_mod} modificado(s) + {total_nao} não alterado(s))"
+                ),
+                data=zip_completo,
+                file_name="xmls_completo_dni.zip",
+                mime="application/zip",
+                use_container_width=True, key="dl_zip_completo",
+            )
+            # Botão secundário: apenas os modificados
+            if total_mod > 0:
+                buf_mod = io.BytesIO()
+                with zipfile.ZipFile(buf_mod, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for nome, conteudo in xmls_mod.items():
+                        zf.writestr(nome, conteudo)
+                buf_mod.seek(0)
+                st.download_button(
+                    label=f"⬇ Baixar apenas modificados ({total_mod} XML(s))",
+                    data=buf_mod.read(),
+                    file_name="xmls_modificados_dni.zip",
+                    mime="application/zip",
+                    use_container_width=True, key="dl_zip_modificados",
+                )
         else:
-            st.warning("⚠️ Nenhum XML foi modificado.")
+            st.warning("⚠️ Nenhum XML disponível para download.")
 
     with st.expander("📋 Log detalhado", expanded=False):
         for nome_arq, msg, status in st.session_state.resultado_log:
@@ -897,21 +856,21 @@ def main():
     st.markdown("""
     <div class="main-header">
         <h2>🧾 Enriquecedor de NF-e — DNI</h2>
-        <p>Thomson Reuters · Domínio Sistemas · v7.6 · CFOP do XML preservado — De/Para apenas no relatório · Totalizadores e formato numérico no Excel</p>
+        <p>Thomson Reuters · Domínio Sistemas · v7.7 · ZIP final inclui modificados + não alterados</p>
     </div>
     """, unsafe_allow_html=True)
 
     st.info(
         "ℹ️ **Lógica De/Para de CFOP:** O CFOP do XLSX é usado **apenas para filtrar** itens de devolução. "
         "O **CFOP original do XML nunca é alterado**. "
-        "O relatório Excel exibe `CFOP XML (origem)` e `CFOP XLSX (DNI/entrada)`, "
-        "com **valores numéricos** e **linha de totais** ao final."
+        "O ZIP final contém **todos os XMLs**: modificados na pasta `modificados/` e "
+        "os não alterados na pasta `nao_alterados/`."
     )
 
     if st.session_state.processamento_concluido:
         st.info("📌 Resultado disponível. Clique em **🔁 Iniciar Novo Processo** para processar novos arquivos.")
         render_resultados()
-        st.markdown('<div class="footer">Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v7.6 · DNI</div>',
+        st.markdown('<div class="footer">Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v7.7 · DNI</div>',
                     unsafe_allow_html=True)
         return
 
@@ -942,8 +901,8 @@ def main():
 
         col_a, col_b, col_c = st.columns(3)
         col_a.metric("📊 Itens indexados", len(dados_indexados))
-        col_b.metric("🔢 CFOPs de devolução ativos", len(cfops_ativas_xlsx))
-        col_c.metric("📁 Arquivos XML", len(arquivos_xml))
+        col_b.metric("🔢 CFOPs ativos",    len(cfops_ativas_xlsx))
+        col_c.metric("📁 Arquivos",        len(arquivos_xml))
 
         with st.expander("🔍 Debug — primeiros 5 itens indexados"):
             for i, ((ch, seq), d) in enumerate(list(dados_indexados.items())[:5]):
@@ -956,16 +915,20 @@ def main():
                     f"vIPI: {d['vlr_ipi']} | tem_ipi: {d['tem_ipi']}"
                 )
 
-        xmls_para_processar = {}
+        # Coleta todos os XMLs (originais preservados)
+        xmls_para_processar: dict[str, bytes] = {}
         for arq in arquivos_xml:
             if arq.name.lower().endswith(".zip"):
                 with zipfile.ZipFile(io.BytesIO(arq.read())) as zf:
                     for nome in zf.namelist():
-                        if nome.lower().endswith(".xml"): xmls_para_processar[nome] = zf.read(nome)
+                        if nome.lower().endswith(".xml"):
+                            xmls_para_processar[nome] = zf.read(nome)
             else:
                 xmls_para_processar[arq.name] = arq.read()
 
-        resultados = []; xmls_modificados = {}; todas_diferencas = []
+        resultados        = []
+        xmls_modificados  = {}   # apenas os que foram alterados
+        todas_diferencas  = []
         progress = st.progress(0)
         total    = len(xmls_para_processar)
 
@@ -973,27 +936,30 @@ def main():
             xml_out, msg, status, diffs = processar_xml(
                 conteudo, nome_arq, dados_indexados, cfops_ativas_xlsx)
             resultados.append((nome_arq, msg, status))
-            if xml_out: xmls_modificados[nome_arq] = xml_out
+            if xml_out:
+                xmls_modificados[nome_arq] = xml_out   # versão processada
             todas_diferencas.extend(diffs)
             progress.progress((idx + 1) / total)
         progress.empty()
 
         excel_bytes = gerar_excel_conferencia(todas_diferencas) if todas_diferencas else b""
 
-        st.session_state.resultado_excel_bytes  = excel_bytes
-        st.session_state.resultado_xmls         = xmls_modificados
-        st.session_state.resultado_log          = resultados
-        st.session_state.resultado_diferencas   = todas_diferencas
-        st.session_state.resultado_metricas     = {
-            "ok":   sum(1 for _, _, s in resultados if s == "ok"),
-            "info": sum(1 for _, _, s in resultados if s == "info"),
-            "erro": sum(1 for _, _, s in resultados if s == "erro"),
-            "diff": sum(1 for r in todas_diferencas if r.get("Tem Diferença") == "SIM"),
+        st.session_state.resultado_excel_bytes       = excel_bytes
+        st.session_state.resultado_xmls_modificados  = xmls_modificados
+        st.session_state.resultado_xmls_originais    = xmls_para_processar  # todos os originais
+        st.session_state.resultado_log               = resultados
+        st.session_state.resultado_diferencas        = todas_diferencas
+        st.session_state.resultado_metricas          = {
+            "ok":         sum(1 for _, _, s in resultados if s == "ok"),
+            "info":       sum(1 for _, _, s in resultados if s == "info"),
+            "erro":       sum(1 for _, _, s in resultados if s == "erro"),
+            "diff":       sum(1 for r in todas_diferencas if r.get("Tem Diferença") == "SIM"),
+            "total_xmls": total,
         }
         st.session_state.processamento_concluido = True
         st.rerun()
 
-    st.markdown('<div class="footer">Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v7.6 · DNI</div>',
+    st.markdown('<div class="footer">Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v7.7 · DNI</div>',
                 unsafe_allow_html=True)
 
 
