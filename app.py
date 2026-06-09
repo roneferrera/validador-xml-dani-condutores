@@ -73,16 +73,6 @@ section[data-testid="stSidebar"] .stButton > button:hover { background-color: #D
     background-color: #F5F5F5; border-left: 4px solid #FF8000;
     border-radius: 4px; padding: 8px 12px;
 }
-.resultado-box {
-    background: #F9F9F9; border: 1px solid #E0E0E0;
-    border-left: 4px solid #FF8000; border-radius: 6px;
-    padding: 16px 20px; margin-bottom: 12px;
-}
-.novo-processo-btn > button {
-    background-color: #444444 !important; color: #FFFFFF !important;
-    border: 2px solid #FF8000 !important; border-radius: 4px !important;
-    font-weight: bold !important; font-size: 1rem !important;
-}
 .footer {
     text-align: center; color: #999; font-size: 0.72rem;
     margin-top: 24px; padding-top: 12px; border-top: 1px solid #E0E0E0;
@@ -94,12 +84,10 @@ section[data-testid="stSidebar"] .stButton > button:hover { background-color: #D
 # SESSION STATE — inicialização completa
 # ─────────────────────────────────────────────
 def _init_state():
-    # CFOPs
     if "cfop_catalogo" not in st.session_state:
         st.session_state.cfop_catalogo = dict(CATALOGO_PADRAO)
     if "cfop_ativos" not in st.session_state:
         st.session_state.cfop_ativos = set(ATIVOS_PADRAO)
-    # Resultados persistentes
     if "resultado_excel_bytes" not in st.session_state:
         st.session_state.resultado_excel_bytes = None
     if "resultado_xmls" not in st.session_state:
@@ -114,7 +102,6 @@ def _init_state():
         st.session_state.processamento_concluido = False
 
 def _limpar_resultados():
-    """Limpa todos os resultados para iniciar novo processo."""
     st.session_state.resultado_excel_bytes = None
     st.session_state.resultado_xmls = {}
     st.session_state.resultado_log = []
@@ -144,7 +131,6 @@ def render_sidebar():
     with st.sidebar:
         st.markdown("## ⚙️ Configuração de CFOPs")
         st.markdown("---")
-
         st.markdown("### 📥 Entrada em Lote")
         st.markdown(
             "<small>Cole CFOPs separados por espaço, vírgula ou quebra de linha.</small>",
@@ -171,7 +157,6 @@ def render_sidebar():
                     st.rerun()
                 else:
                     st.warning("Nenhum CFOP válido encontrado.")
-
         with col_b:
             if st.button("🗑️ Desativar", use_container_width=True, key="btn_desativar_lote"):
                 codigos = _extrair_cfops_texto(texto)
@@ -185,13 +170,11 @@ def render_sidebar():
 
         st.markdown("---")
         st.markdown("### 🎛️ Controles")
-
         if st.button("🔄 Redefinir para o Padrão", use_container_width=True, key="btn_reset_cfop"):
             st.session_state.cfop_catalogo = dict(CATALOGO_PADRAO)
             st.session_state.cfop_ativos   = set(ATIVOS_PADRAO)
             st.toast("✅ Catálogo restaurado para o padrão.", icon="🔄")
             st.rerun()
-
         if st.button("🔲 Desmarcar Todos", use_container_width=True, key="btn_desmarcar_todos"):
             st.session_state.cfop_ativos = set()
             st.toast("🔲 Todos os CFOPs desmarcados.", icon="🔲")
@@ -219,7 +202,6 @@ def render_sidebar():
             use_container_width=True,
             key="cfop_data_editor",
         )
-
         novos_ativos: set[int] = {row["Código"] for row in edited if row["Ativo"]}
         if novos_ativos != st.session_state.cfop_ativos:
             st.session_state.cfop_ativos = novos_ativos
@@ -229,7 +211,6 @@ def render_sidebar():
         st.markdown("#### 🐍 Array Python (backend)")
         lista_ativos = sorted(st.session_state.cfop_ativos)
         st.code(str(lista_ativos), language="python")
-
         total  = len(st.session_state.cfop_catalogo)
         ativos = len(lista_ativos)
         st.caption(f"Catálogo: **{total}** | Ativos: **{ativos}** | Inativos: **{total - ativos}**")
@@ -238,7 +219,7 @@ def render_sidebar():
         st.markdown("### ℹ️ Sobre")
         st.markdown("**Thomson Reuters**")
         st.markdown("**Domínio Sistemas**")
-        st.markdown("**Enriquecedor NF-e v7.1**")
+        st.markdown("**Enriquecedor NF-e v7.2**")
 
 # ─────────────────────────────────────────────
 # HELPERS GERAIS
@@ -326,6 +307,14 @@ def ler_xlsx(conteudo_bytes: bytes):
         ):
             cst_icms = "10"
 
+        # IPI — lê Base Ipi, Perc Ipi, Vlr Ipi do XLSX
+        base_ipi = limpar_valor(reg.get("Base Ipi", "0"))
+        perc_ipi = limpar_valor(reg.get("Perc Ipi", "0"))
+        vlr_ipi  = limpar_valor(reg.get("Vlr Ipi",  "0"))
+
+        # Só gera IPI se houver valor no XLSX
+        tem_ipi = (base_ipi > 0 or vlr_ipi > 0)
+
         indexado[(chave_nfe, seq)] = {
             "cfop":           reg.get("Cfop", "").strip(),
             "cod_item":       reg.get("Cod Item", "").strip(),
@@ -344,9 +333,10 @@ def ler_xlsx(conteudo_bytes: bytes):
             "base_icms_st":   limpar_valor(reg.get("Base Icms St", "0")),
             "vlr_icms_st":    vlr_icms_st,
             "cst_ipi":        safe_int_cst(reg.get("CST IPI", "")),
-            "base_ipi":       limpar_valor(reg.get("Base Ipi", "0")),
-            "perc_ipi":       limpar_valor(reg.get("Perc Ipi", "0")),
+            "base_ipi":       base_ipi,
+            "perc_ipi":       perc_ipi,
             "vlr_ipi":        vlr_ipi,
+            "tem_ipi":        tem_ipi,
             "cst_pis":        safe_int_cst(reg.get("CST PIS", "")),
             "perc_pis":       limpar_valor(reg.get("Perc Pis", "0")),
             "vlr_pis":        limpar_valor(reg.get("Vlr Pis", "0")),
@@ -364,8 +354,8 @@ def ler_xlsx(conteudo_bytes: bytes):
 # ─────────────────────────────────────────────
 NS = "http://www.portalfiscal.inf.br/nfe"
 
-def tag(nome):   return f"{{{NS}}}{nome}"
-def local(elem): return elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
+def nstag(nome):  return f"{{{NS}}}{nome}"
+def local(elem):  return elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
 
 def find(elem, *nomes):
     atual = elem
@@ -379,6 +369,24 @@ def find(elem, *nomes):
             return None
         atual = enc
     return atual
+
+def _insert_after(parent, ref_tag_name: str, new_elem) -> bool:
+    """Insere new_elem imediatamente após o primeiro filho com local() == ref_tag_name."""
+    for i, child in enumerate(parent):
+        if local(child) == ref_tag_name:
+            parent.insert(i + 1, new_elem)
+            return True
+    parent.append(new_elem)
+    return False
+
+def _insert_before(parent, ref_tag_name: str, new_elem) -> bool:
+    """Insere new_elem imediatamente antes do primeiro filho com local() == ref_tag_name."""
+    for i, child in enumerate(parent):
+        if local(child) == ref_tag_name:
+            parent.insert(i, new_elem)
+            return True
+    parent.append(new_elem)
+    return False
 
 # ─────────────────────────────────────────────
 # ICMS
@@ -415,7 +423,7 @@ def aplicar_icms(icms_filho, dados):
             idx_vicms = next(
                 (i for i, f in enumerate(icms_filho) if local(f) == "vICMS"), None
             )
-            el_mod = etree.SubElement(icms_filho, tag("modBCST"))
+            el_mod = etree.SubElement(icms_filho, nstag("modBCST"))
             el_mod.text = "4"
             if idx_vicms is not None:
                 icms_filho.remove(el_mod)
@@ -428,7 +436,7 @@ def aplicar_icms(icms_filho, dados):
                 idx_mod = next(
                     (i for i, f in enumerate(icms_filho) if local(f) == "modBCST"), None
                 )
-                el_pmva = etree.SubElement(icms_filho, tag("pMVAST"))
+                el_pmva = etree.SubElement(icms_filho, nstag("pMVAST"))
                 el_pmva.text = "0.00"
                 if idx_mod is not None:
                     icms_filho.remove(el_pmva)
@@ -444,69 +452,83 @@ def aplicar_icms(icms_filho, dados):
                 el.text = tv
                 modificado = True
             else:
-                novo = etree.SubElement(icms_filho, tag(tn))
+                novo = etree.SubElement(icms_filho, nstag(tn))
                 novo.text = tv
                 modificado = True
 
     return modificado
 
 # ─────────────────────────────────────────────
-# IPI — preenche vBC/pIPI/vIPI e zera vIPIDevol
+# IPI — LÓGICA COMPLETA v7.2
 # ─────────────────────────────────────────────
 def aplicar_ipi(imposto_elem, det_elem, dados):
+    """
+    Regras:
+    1. Se o XLSX tem Base Ipi / Perc Ipi / Vlr Ipi com valores > 0:
+       - Dentro de <IPITrib>:
+         * Remove <qUnid> e <vUnid> se existirem
+         * Cria <vBC> se não existir (após <CST>)
+         * Cria <pIPI> se não existir (após <vBC>)
+         * Atualiza ou cria <vIPI> (após <pIPI>)
+         * Preenche com os valores do XLSX
+    2. Sempre zera <vIPIDevol> em <impostoDevol>
+    3. Preserva <CNPJProd> e <cEnq> dentro de <IPI>
+    """
     modificado = False
+    tem_ipi    = dados.get("tem_ipi", False)
 
     ipi_elem = find(imposto_elem, "IPI")
     if ipi_elem is not None:
         ipi_trib = find(ipi_elem, "IPITrib")
-        if ipi_trib is not None:
+        if ipi_trib is not None and tem_ipi:
 
-            el = find(ipi_trib, "CST")
-            if el is not None:
-                el.text = dados["cst_ipi"]
+            # ── 1. CST ──
+            el_cst = find(ipi_trib, "CST")
+            if el_cst is not None:
+                el_cst.text = dados["cst_ipi"]
                 modificado = True
 
-            for tag_alt in ["qUnid", "vUnid"]:
-                el_alt = find(ipi_trib, tag_alt)
-                if el_alt is not None:
-                    ipi_trib.remove(el_alt)
+            # ── 2. Remove qUnid e vUnid (formato alternativo) ──
+            for tag_rem in ["qUnid", "vUnid"]:
+                el_rem = find(ipi_trib, tag_rem)
+                if el_rem is not None:
+                    ipi_trib.remove(el_rem)
                     modificado = True
 
+            # ── 3. vBC — cria se não existir, sempre após CST ──
             el_vbc = find(ipi_trib, "vBC")
             if el_vbc is None:
-                idx_cst = next(
-                    (i for i, f in enumerate(ipi_trib) if local(f) == "CST"), None
-                )
-                el_vbc = etree.SubElement(ipi_trib, tag("vBC"))
+                el_vbc = etree.Element(nstag("vBC"))
                 el_vbc.text = fmt(dados["base_ipi"])
-                if idx_cst is not None:
-                    ipi_trib.remove(el_vbc)
-                    ipi_trib.insert(idx_cst + 1, el_vbc)
+                _insert_after(ipi_trib, "CST", el_vbc)
                 modificado = True
             else:
                 el_vbc.text = fmt(dados["base_ipi"])
                 modificado = True
 
+            # ── 4. pIPI — cria se não existir, sempre após vBC ──
             el_pipi = find(ipi_trib, "pIPI")
             if el_pipi is None:
-                idx_vbc = next(
-                    (i for i, f in enumerate(ipi_trib) if local(f) == "vBC"), None
-                )
-                el_pipi = etree.SubElement(ipi_trib, tag("pIPI"))
+                el_pipi = etree.Element(nstag("pIPI"))
                 el_pipi.text = fmt(dados["perc_ipi"])
-                if idx_vbc is not None:
-                    ipi_trib.remove(el_pipi)
-                    ipi_trib.insert(idx_vbc + 1, el_pipi)
+                _insert_after(ipi_trib, "vBC", el_pipi)
                 modificado = True
             else:
                 el_pipi.text = fmt(dados["perc_ipi"])
                 modificado = True
 
+            # ── 5. vIPI — cria se não existir, sempre após pIPI ──
             el_vipi = find(ipi_trib, "vIPI")
-            if el_vipi is not None:
+            if el_vipi is None:
+                el_vipi = etree.Element(nstag("vIPI"))
+                el_vipi.text = fmt(dados["vlr_ipi"])
+                _insert_after(ipi_trib, "pIPI", el_vipi)
+                modificado = True
+            else:
                 el_vipi.text = fmt(dados["vlr_ipi"])
                 modificado = True
 
+    # ── 6. Zera vIPIDevol em impostoDevol ──
     imp_devol = find(det_elem, "impostoDevol")
     if imp_devol is not None:
         ipi_devol = find(imp_devol, "IPI")
@@ -571,6 +593,7 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
             except Exception:
                 return 0.0
 
+        # ── Coleta ANTES ──
         antes = {}
         icms_pai = find(imposto, "ICMS")
         if icms_pai:
@@ -583,12 +606,18 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
                     antes["BC ICMS ST"]  = _get(icms_f, "vBCST")
                     antes["Vlr ICMS ST"] = _get(icms_f, "vICMSST")
                     break
+
         ipi_t = find(imposto, "IPI", "IPITrib")
         if ipi_t:
             antes["CST IPI"] = _get(ipi_t, "CST")
-            antes["BC IPI"]  = _get(ipi_t, "vBC") or _get(ipi_t, "qUnid")
+            # Captura vBC se existir, senão qUnid (antes da transformação)
+            vbc_antes = _get(ipi_t, "vBC")
+            if vbc_antes == "0":
+                vbc_antes = _get(ipi_t, "qUnid")
+            antes["BC IPI"]  = vbc_antes
             antes["% IPI"]   = _get(ipi_t, "pIPI")
             antes["Vlr IPI"] = _get(ipi_t, "vIPI")
+
         pis_p = find(imposto, "PIS")
         if pis_p:
             for pf in pis_p:
@@ -597,6 +626,7 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
                 antes["% PIS"]   = _get(pf, "pPIS")
                 antes["Vlr PIS"] = _get(pf, "vPIS")
                 break
+
         cof_p = find(imposto, "COFINS")
         if cof_p:
             for cf in cof_p:
@@ -608,16 +638,19 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
 
         cfop_antes = _get(prod, "CFOP")
 
+        # ── CFOP ──
         el = find(prod, "CFOP")
         if el is not None and dados["cfop"]:
             el.text = dados["cfop"]
             modificado = True
 
+        # ── NCM ──
         el = find(prod, "NCM")
         if el is not None and dados["ncm"]:
             el.text = dados["ncm"]
             modificado = True
 
+        # ── ICMS ──
         if icms_pai is not None:
             for icms_f in icms_pai:
                 if local(icms_f).startswith("ICMS"):
@@ -625,9 +658,11 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
                         modificado = True
                     break
 
+        # ── IPI + vIPIDevol ──
         if aplicar_ipi(imposto, det, dados):
             modificado = True
 
+        # ── PIS ──
         pis_pai = find(imposto, "PIS")
         if pis_pai is not None:
             for pf in pis_pai:
@@ -643,6 +678,7 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
                         modificado = True
                 break
 
+        # ── COFINS ──
         cof_pai = find(imposto, "COFINS")
         if cof_pai is not None:
             for cf in cof_pai:
@@ -658,6 +694,7 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
                         modificado = True
                 break
 
+        # ── Coleta DEPOIS ──
         depois = {
             "CST ICMS":    dados["cst_icms"],
             "BC ICMS":     fmt(dados["base_icms"]),
@@ -975,7 +1012,6 @@ def gerar_excel_conferencia(todas_diferencas: list) -> bytes:
 # RENDERIZA BLOCO DE RESULTADOS PERSISTENTES
 # ─────────────────────────────────────────────
 def render_resultados():
-    """Exibe os resultados salvos no session_state — persiste após downloads."""
     m = st.session_state.resultado_metricas
     if m is None:
         return
@@ -983,7 +1019,6 @@ def render_resultados():
     st.divider()
     st.markdown("### ✅ Resultado do Processamento")
 
-    # Botão Novo Processo — destaque visual
     col_np, col_esp = st.columns([2, 6])
     with col_np:
         if st.button(
@@ -995,9 +1030,8 @@ def render_resultados():
             _limpar_resultados()
             st.rerun()
 
-    st.markdown("")  # espaçamento
+    st.markdown("")
 
-    # Métricas
     col_x, col_y, col_z, col_w = st.columns(4)
     col_x.metric("✅ Alterados",     m["ok"])
     col_y.metric("ℹ️ Sem alteração", m["info"])
@@ -1006,7 +1040,6 @@ def render_resultados():
 
     st.divider()
 
-    # Downloads — sempre visíveis até clicar em Novo Processo
     col_dl1, col_dl2 = st.columns(2)
 
     with col_dl1:
@@ -1055,7 +1088,6 @@ def render_resultados():
         else:
             st.warning("⚠️ Nenhum XML foi modificado.")
 
-    # Log detalhado
     with st.expander("📋 Log detalhado de resultados", expanded=False):
         for nome_arq, msg, status in st.session_state.resultado_log:
             icon = "✅" if status == "ok" else ("ℹ️" if status == "info" else "❌")
@@ -1073,11 +1105,10 @@ def main():
     st.markdown("""
     <div class="main-header">
         <h2>🧾 Enriquecedor de NF-e — DNI</h2>
-        <p>Thomson Reuters · Domínio Sistemas · Processamento Fiscal Automatizado · v7.1</p>
+        <p>Thomson Reuters · Domínio Sistemas · Processamento Fiscal Automatizado · v7.2</p>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Se já há resultado, mostra-o e encerra (não exibe formulário) ──
     if st.session_state.processamento_concluido:
         st.info(
             "📌 Resultado disponível abaixo. Clique em **🔁 Iniciar Novo Processo** para processar novos arquivos."
@@ -1085,20 +1116,17 @@ def main():
         render_resultados()
         st.markdown("""
         <div class="footer">
-            Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v7.1 · DNI
+            Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v7.2 · DNI
         </div>
         """, unsafe_allow_html=True)
         return
 
-    # ── Formulário de upload ──
     col_up1, col_up2 = st.columns(2)
-
     with col_up1:
         st.markdown("#### 📂 Arquivo XLSX — Domínio Sistemas")
         arquivo_xlsx = st.file_uploader(
             "xlsx", type=["xlsx"], key="xlsx", label_visibility="collapsed"
         )
-
     with col_up2:
         st.markdown("#### 📄 Arquivos XML de NF-e")
         arquivos_xml = st.file_uploader(
@@ -1143,7 +1171,8 @@ def main():
                     f"Chave: {ch} | Seq: {seq} | CFOP: {d['cfop']}\n"
                     f"CST ICMS: {d['cst_icms']} | vICMS: {d['vlr_icms']} | "
                     f"BC ST: {d['base_icms_st']} | vST: {d['vlr_icms_st']}\n"
-                    f"BC IPI: {d['base_ipi']} | % IPI: {d['perc_ipi']} | vIPI: {d['vlr_ipi']}\n"
+                    f"BC IPI: {d['base_ipi']} | % IPI: {d['perc_ipi']} | "
+                    f"vIPI: {d['vlr_ipi']} | tem_ipi: {d['tem_ipi']}\n"
                     f"BC PIS/COF: {d['bc_pis_cofins']}"
                 )
 
@@ -1175,10 +1204,8 @@ def main():
 
         progress.empty()
 
-        # Gera Excel de conferência
         excel_bytes = gerar_excel_conferencia(todas_diferencas) if todas_diferencas else b""
 
-        # ── Salva tudo no session_state ──
         st.session_state.resultado_excel_bytes  = excel_bytes
         st.session_state.resultado_xmls         = xmls_modificados
         st.session_state.resultado_log          = resultados
@@ -1194,7 +1221,7 @@ def main():
 
     st.markdown("""
     <div class="footer">
-        Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v7.1 · DNI
+        Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v7.2 · DNI
     </div>
     """, unsafe_allow_html=True)
 
