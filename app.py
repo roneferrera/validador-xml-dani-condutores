@@ -81,7 +81,7 @@ section[data-testid="stSidebar"] .stButton > button:hover { background-color: #D
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-# SESSION STATE — inicialização completa
+# SESSION STATE
 # ─────────────────────────────────────────────
 def _init_state():
     if "cfop_catalogo" not in st.session_state:
@@ -125,7 +125,7 @@ def _build_rows() -> list[dict]:
     ]
 
 # ─────────────────────────────────────────────
-# BARRA LATERAL — CFOP MANAGER
+# BARRA LATERAL
 # ─────────────────────────────────────────────
 def render_sidebar():
     with st.sidebar:
@@ -143,7 +143,6 @@ def render_sidebar():
             key="sidebar_cfop_texto",
             label_visibility="collapsed",
         )
-
         col_a, col_b = st.columns(2)
         with col_a:
             if st.button("➕ Ativar", use_container_width=True, key="btn_ativar_lote"):
@@ -187,16 +186,10 @@ def render_sidebar():
             rows,
             column_config={
                 "Ativo": st.column_config.CheckboxColumn(
-                    label="Ativo",
-                    help="Marque para incluir no processamento.",
-                    default=False,
+                    label="Ativo", help="Marque para incluir no processamento.", default=False,
                 ),
-                "Código": st.column_config.NumberColumn(
-                    label="Código", format="%d", disabled=True,
-                ),
-                "Descrição": st.column_config.TextColumn(
-                    label="Descrição", disabled=True,
-                ),
+                "Código": st.column_config.NumberColumn(label="Código", format="%d", disabled=True),
+                "Descrição": st.column_config.TextColumn(label="Descrição", disabled=True),
             },
             hide_index=True,
             use_container_width=True,
@@ -219,7 +212,7 @@ def render_sidebar():
         st.markdown("### ℹ️ Sobre")
         st.markdown("**Thomson Reuters**")
         st.markdown("**Domínio Sistemas**")
-        st.markdown("**Enriquecedor NF-e v7.2**")
+        st.markdown("**Enriquecedor NF-e v7.3**")
 
 # ─────────────────────────────────────────────
 # HELPERS GERAIS
@@ -307,15 +300,12 @@ def ler_xlsx(conteudo_bytes: bytes):
         ):
             cst_icms = "10"
 
-        # IPI — lê Base Ipi, Perc Ipi, Vlr Ipi do XLSX
         base_ipi = limpar_valor(reg.get("Base Ipi", "0"))
         perc_ipi = limpar_valor(reg.get("Perc Ipi", "0"))
-        vlr_ipi  = limpar_valor(reg.get("Vlr Ipi",  "0"))
-
-        # Só gera IPI se houver valor no XLSX
-        tem_ipi = (base_ipi > 0 or vlr_ipi > 0)
+        tem_ipi  = (base_ipi > 0 or vlr_ipi > 0)
 
         indexado[(chave_nfe, seq)] = {
+            # ── CFOP mantido apenas para conferência — NÃO aplicado no XML ──
             "cfop":           reg.get("Cfop", "").strip(),
             "cod_item":       reg.get("Cod Item", "").strip(),
             "desc_item":      reg.get("Desc Item", "").strip(),
@@ -370,20 +360,10 @@ def find(elem, *nomes):
         atual = enc
     return atual
 
-def _insert_after(parent, ref_tag_name: str, new_elem) -> bool:
-    """Insere new_elem imediatamente após o primeiro filho com local() == ref_tag_name."""
+def _insert_after(parent, ref_tag_name: str, new_elem):
     for i, child in enumerate(parent):
         if local(child) == ref_tag_name:
             parent.insert(i + 1, new_elem)
-            return True
-    parent.append(new_elem)
-    return False
-
-def _insert_before(parent, ref_tag_name: str, new_elem) -> bool:
-    """Insere new_elem imediatamente antes do primeiro filho com local() == ref_tag_name."""
-    for i, child in enumerate(parent):
-        if local(child) == ref_tag_name:
-            parent.insert(i, new_elem)
             return True
     parent.append(new_elem)
     return False
@@ -459,32 +439,14 @@ def aplicar_icms(icms_filho, dados):
     return modificado
 
 # ─────────────────────────────────────────────
-# IPI — LÓGICA COMPLETA v7.3
-# Cria o bloco <IPI> completo se não existir no XML mas houver valor no XLSX
-# Zera <vIPIDevol> em <impostoDevol> sempre que existir
+# IPI — gera vBC/pIPI/vIPI e zera impostoDevol
 # ─────────────────────────────────────────────
 def aplicar_ipi(imposto_elem, det_elem, dados):
     """
-    Regras:
-    1. Se XLSX tem Base Ipi / Perc Ipi / Vlr Ipi (tem_ipi=True):
-       a. Se <IPI> já existe em <imposto>:
-          - Remove <qUnid> e <vUnid> de <IPITrib> se existirem
-          - Cria <vBC>, <pIPI>, <vIPI> se não existirem (inseridos na ordem correta)
-          - Atualiza os valores
-       b. Se <IPI> NÃO existe em <imposto>:
-          - Cria o bloco completo:
-            <IPI>
-              <cEnq>999</cEnq>
-              <IPITrib>
-                <CST>XX</CST>
-                <vBC>0.00</vBC>
-                <pIPI>0.00</pIPI>
-                <vIPI>0.00</vIPI>
-              </IPITrib>
-            </IPI>
-          - Insere antes de <PIS> (ordem SEFAZ)
-    2. Sempre zera <vIPIDevol> em <impostoDevol> se existir
-    3. Preserva <CNPJProd> e <cEnq> se já existirem
+    1. Se XLSX tem IPI (tem_ipi=True):
+       - Se <IPI> não existe em <imposto>: cria bloco completo antes de <PIS>
+       - Se <IPI> existe: remove qUnid/vUnid, cria/atualiza vBC, pIPI, vIPI
+    2. Zera <pDevol> e <vIPIDevol> em <impostoDevol> — SEMPRE
     """
     modificado = False
     tem_ipi    = dados.get("tem_ipi", False)
@@ -496,26 +458,23 @@ def aplicar_ipi(imposto_elem, det_elem, dados):
         if ipi_elem is None:
             ipi_elem = etree.Element(nstag("IPI"))
 
-            # <cEnq> obrigatório
-            el_cenq = etree.SubElement(ipi_elem, nstag("cEnq"))
+            el_cenq      = etree.SubElement(ipi_elem, nstag("cEnq"))
             el_cenq.text = "999"
 
-            # <IPITrib>
-            ipi_trib = etree.SubElement(ipi_elem, nstag("IPITrib"))
+            ipi_trib     = etree.SubElement(ipi_elem, nstag("IPITrib"))
 
-            el_cst = etree.SubElement(ipi_trib, nstag("CST"))
-            el_cst.text = dados["cst_ipi"] if dados["cst_ipi"] != "00" else "50"
+            el_cst       = etree.SubElement(ipi_trib, nstag("CST"))
+            el_cst.text  = dados["cst_ipi"] if dados["cst_ipi"] != "00" else "50"
 
-            el_vbc = etree.SubElement(ipi_trib, nstag("vBC"))
-            el_vbc.text = fmt(dados["base_ipi"])
+            el_vbc       = etree.SubElement(ipi_trib, nstag("vBC"))
+            el_vbc.text  = fmt(dados["base_ipi"])
 
-            el_pipi = etree.SubElement(ipi_trib, nstag("pIPI"))
+            el_pipi      = etree.SubElement(ipi_trib, nstag("pIPI"))
             el_pipi.text = fmt(dados["perc_ipi"])
 
-            el_vipi = etree.SubElement(ipi_trib, nstag("vIPI"))
+            el_vipi      = etree.SubElement(ipi_trib, nstag("vIPI"))
             el_vipi.text = fmt(dados["vlr_ipi"])
 
-            # Insere antes de <PIS> para respeitar ordem SEFAZ
             pis_elem = find(imposto_elem, "PIS")
             if pis_elem is not None:
                 idx_pis = list(imposto_elem).index(pis_elem)
@@ -534,56 +493,63 @@ def aplicar_ipi(imposto_elem, det_elem, dados):
                 el_cst = find(ipi_trib, "CST")
                 if el_cst is not None:
                     el_cst.text = dados["cst_ipi"]
-                    modificado = True
+                    modificado  = True
 
-                # Remove qUnid / vUnid (formato alternativo)
+                # Remove qUnid / vUnid
                 for tag_rem in ["qUnid", "vUnid"]:
                     el_rem = find(ipi_trib, tag_rem)
                     if el_rem is not None:
                         ipi_trib.remove(el_rem)
                         modificado = True
 
-                # vBC — cria se não existir
+                # vBC
                 el_vbc = find(ipi_trib, "vBC")
                 if el_vbc is None:
-                    el_vbc = etree.Element(nstag("vBC"))
+                    el_vbc      = etree.Element(nstag("vBC"))
                     el_vbc.text = fmt(dados["base_ipi"])
                     _insert_after(ipi_trib, "CST", el_vbc)
-                    modificado = True
+                    modificado  = True
                 else:
                     el_vbc.text = fmt(dados["base_ipi"])
-                    modificado = True
+                    modificado  = True
 
-                # pIPI — cria se não existir
+                # pIPI
                 el_pipi = find(ipi_trib, "pIPI")
                 if el_pipi is None:
-                    el_pipi = etree.Element(nstag("pIPI"))
+                    el_pipi      = etree.Element(nstag("pIPI"))
                     el_pipi.text = fmt(dados["perc_ipi"])
                     _insert_after(ipi_trib, "vBC", el_pipi)
-                    modificado = True
+                    modificado   = True
                 else:
                     el_pipi.text = fmt(dados["perc_ipi"])
-                    modificado = True
+                    modificado   = True
 
-                # vIPI — cria se não existir
+                # vIPI
                 el_vipi = find(ipi_trib, "vIPI")
                 if el_vipi is None:
-                    el_vipi = etree.Element(nstag("vIPI"))
+                    el_vipi      = etree.Element(nstag("vIPI"))
                     el_vipi.text = fmt(dados["vlr_ipi"])
                     _insert_after(ipi_trib, "pIPI", el_vipi)
-                    modificado = True
+                    modificado   = True
                 else:
                     el_vipi.text = fmt(dados["vlr_ipi"])
-                    modificado = True
+                    modificado   = True
 
-    # ── Zera vIPIDevol em impostoDevol (sempre) ──
+    # ── Zera <pDevol> e <vIPIDevol> em <impostoDevol> — SEMPRE ──
     imp_devol = find(det_elem, "impostoDevol")
     if imp_devol is not None:
+        # Zera pDevol
+        el_pdevol = find(imp_devol, "pDevol")
+        if el_pdevol is not None:
+            el_pdevol.text = "0.00"
+            modificado = True
+
+        # Zera vIPIDevol
         ipi_devol = find(imp_devol, "IPI")
         if ipi_devol is not None:
-            el_devol = find(ipi_devol, "vIPIDevol")
-            if el_devol is not None:
-                el_devol.text = "0.00"
+            el_vipidevol = find(ipi_devol, "vIPIDevol")
+            if el_vipidevol is not None:
+                el_vipidevol.text = "0.00"
                 modificado = True
 
     return modificado
@@ -616,7 +582,14 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
         dados = dados_indexados.get((chave_xml, n_item))
         if dados is None:
             continue
-        if dados.get("cfop", "") in cfops_ativas:
+        # Filtra pelo CFOP que está no XML — não pelo XLSX
+        cfop_xml = ""
+        prod_el  = find(det, "prod")
+        if prod_el is not None:
+            el = find(prod_el, "CFOP")
+            if el is not None:
+                cfop_xml = (el.text or "").strip()
+        if cfop_xml in cfops_ativas:
             itens_validos.append((det, n_item, dados))
 
     if not itens_validos:
@@ -658,10 +631,9 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
         ipi_t = find(imposto, "IPI", "IPITrib")
         if ipi_t:
             antes["CST IPI"] = _get(ipi_t, "CST")
-            # Captura vBC se existir, senão qUnid (antes da transformação)
-            vbc_antes = _get(ipi_t, "vBC")
+            vbc_antes        = _get(ipi_t, "vBC")
             if vbc_antes == "0":
-                vbc_antes = _get(ipi_t, "qUnid")
+                vbc_antes    = _get(ipi_t, "qUnid")
             antes["BC IPI"]  = vbc_antes
             antes["% IPI"]   = _get(ipi_t, "pIPI")
             antes["Vlr IPI"] = _get(ipi_t, "vIPI")
@@ -684,13 +656,13 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
                 antes["Vlr COFINS"] = _get(cf, "vCOFINS")
                 break
 
-        cfop_antes = _get(prod, "CFOP")
+        # Coleta impostoDevol ANTES
+        imp_devol_el = find(det, "impostoDevol")
+        antes["pDevol"]     = _get(imp_devol_el, "pDevol")     if imp_devol_el is not None else "0"
+        antes["vIPIDevol"]  = _get(imp_devol_el, "IPI", "vIPIDevol") if imp_devol_el is not None else "0"
 
-        # ── CFOP ──
-        el = find(prod, "CFOP")
-        if el is not None and dados["cfop"]:
-            el.text = dados["cfop"]
-            modificado = True
+        # CFOP do XML (mantido — não alterado)
+        cfop_xml_atual = _get(prod, "CFOP")
 
         # ── NCM ──
         el = find(prod, "NCM")
@@ -706,7 +678,7 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
                         modificado = True
                     break
 
-        # ── IPI + vIPIDevol ──
+        # ── IPI + impostoDevol ──
         if aplicar_ipi(imposto, det, dados):
             modificado = True
 
@@ -762,76 +734,87 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas):
             "BC COFINS":   fmt(dados["bc_pis_cofins"]),
             "% COFINS":    fmt(dados["perc_cofins"]),
             "Vlr COFINS":  fmt(dados["vlr_cofins"]),
+            "pDevol":      "0.00",
+            "vIPIDevol":   "0.00",
         }
 
         campos_num = [
             "BC ICMS","Vlr ICMS","BC ICMS ST","Vlr ICMS ST",
-            "BC IPI","Vlr IPI","BC PIS","Vlr PIS","BC COFINS","Vlr COFINS"
+            "BC IPI","Vlr IPI","BC PIS","Vlr PIS","BC COFINS","Vlr COFINS",
+            "vIPIDevol",
         ]
-        tem_diff = (
-            any(
-                round(_fv(antes.get(k, "0")), 2) != round(_fv(depois.get(k, "0")), 2)
-                for k in campos_num
-            ) or cfop_antes != dados["cfop"]
+        tem_diff = any(
+            round(_fv(antes.get(k, "0")), 2) != round(_fv(depois.get(k, "0")), 2)
+            for k in campos_num
         )
 
         xprod_el = find(prod, "xProd")
         xprod    = xprod_el.text if xprod_el is not None else ""
 
         row_conf = {
-            "Arquivo":            nome_arquivo,
-            "Chave NF-e":         chave_xml,
-            "Nro Documento":      dados["nro_documento"],
-            "Data Emissão":       dados["data_emissao"],
-            "Data Entrada":       dados["data_entrada"],
-            "Razão Social":       dados["razao_social"],
-            "CNPJ/CPF":           dados["cnpj"],
-            "UF":                 dados["uf"],
-            "nItem":              n_item,
-            "Cód Item":           dados["cod_item"],
-            "Desc Item":          xprod,
-            "NCM":                dados["ncm"],
-            "CFOP Antes":         cfop_antes,
-            "CFOP Depois":        dados["cfop"],
-            "Vlr Documento":      fmt_br(dados["vlr_documento"]),
-            "CST ICMS Antes":     antes.get("CST ICMS", ""),
-            "CST ICMS Depois":    depois["CST ICMS"],
-            "BC ICMS Antes":      fmt_br(antes.get("BC ICMS", "0")),
-            "BC ICMS Depois":     fmt_br(depois["BC ICMS"]),
-            "% ICMS":             fmt_br(depois["% ICMS"]),
-            "Vlr ICMS Antes":     fmt_br(antes.get("Vlr ICMS", "0")),
-            "Vlr ICMS Depois":    fmt_br(depois["Vlr ICMS"]),
-            "Diff Vlr ICMS":      fmt_br(_fv(depois["Vlr ICMS"]) - _fv(antes.get("Vlr ICMS","0"))),
-            "BC ICMS ST Antes":   fmt_br(antes.get("BC ICMS ST", "0")),
-            "BC ICMS ST Depois":  fmt_br(depois["BC ICMS ST"]),
-            "Vlr ICMS ST Antes":  fmt_br(antes.get("Vlr ICMS ST", "0")),
-            "Vlr ICMS ST Depois": fmt_br(depois["Vlr ICMS ST"]),
-            "Diff Vlr ICMS ST":   fmt_br(_fv(depois["Vlr ICMS ST"]) - _fv(antes.get("Vlr ICMS ST","0"))),
-            "CST IPI Antes":      antes.get("CST IPI", ""),
-            "CST IPI Depois":     depois["CST IPI"],
-            "BC IPI Antes":       fmt_br(antes.get("BC IPI", "0")),
-            "BC IPI Depois":      fmt_br(depois["BC IPI"]),
-            "% IPI":              fmt_br(depois["% IPI"]),
-            "Vlr IPI Antes":      fmt_br(antes.get("Vlr IPI", "0")),
-            "Vlr IPI Depois":     fmt_br(depois["Vlr IPI"]),
-            "Diff Vlr IPI":       fmt_br(_fv(depois["Vlr IPI"]) - _fv(antes.get("Vlr IPI","0"))),
-            "CST PIS Antes":      antes.get("CST PIS", ""),
-            "CST PIS Depois":     depois["CST PIS"],
-            "BC PIS Antes":       fmt_br(antes.get("BC PIS", "0")),
-            "BC PIS Depois":      fmt_br(depois["BC PIS"]),
-            "% PIS":              fmt_br(depois["% PIS"]),
-            "Vlr PIS Antes":      fmt_br(antes.get("Vlr PIS", "0")),
-            "Vlr PIS Depois":     fmt_br(depois["Vlr PIS"]),
-            "Diff Vlr PIS":       fmt_br(_fv(depois["Vlr PIS"]) - _fv(antes.get("Vlr PIS","0"))),
-            "CST COFINS Antes":   antes.get("CST COFINS", ""),
-            "CST COFINS Depois":  depois["CST COFINS"],
-            "BC COFINS Antes":    fmt_br(antes.get("BC COFINS", "0")),
-            "BC COFINS Depois":   fmt_br(depois["BC COFINS"]),
-            "% COFINS":           fmt_br(depois["% COFINS"]),
-            "Vlr COFINS Antes":   fmt_br(antes.get("Vlr COFINS", "0")),
-            "Vlr COFINS Depois":  fmt_br(depois["Vlr COFINS"]),
-            "Diff Vlr COFINS":    fmt_br(_fv(depois["Vlr COFINS"]) - _fv(antes.get("Vlr COFINS","0"))),
-            "Tem Diferença":      "SIM" if tem_diff else "NÃO",
+            "Arquivo":              nome_arquivo,
+            "Chave NF-e":           chave_xml,
+            "Nro Documento":        dados["nro_documento"],
+            "Data Emissão":         dados["data_emissao"],
+            "Data Entrada":         dados["data_entrada"],
+            "Razão Social":         dados["razao_social"],
+            "CNPJ/CPF":             dados["cnpj"],
+            "UF":                   dados["uf"],
+            "nItem":                n_item,
+            "Cód Item":             dados["cod_item"],
+            "Desc Item":            xprod,
+            "NCM":                  dados["ncm"],
+            "CFOP XML":             cfop_xml_atual,
+            "CFOP XLSX":            dados["cfop"],
+            "Vlr Documento":        fmt_br(dados["vlr_documento"]),
+            # ICMS
+            "CST ICMS Antes":       antes.get("CST ICMS", ""),
+            "CST ICMS Depois":      depois["CST ICMS"],
+            "BC ICMS Antes":        fmt_br(antes.get("BC ICMS", "0")),
+            "BC ICMS Depois":       fmt_br(depois["BC ICMS"]),
+            "% ICMS":               fmt_br(depois["% ICMS"]),
+            "Vlr ICMS Antes":       fmt_br(antes.get("Vlr ICMS", "0")),
+            "Vlr ICMS Depois":      fmt_br(depois["Vlr ICMS"]),
+            "Diff Vlr ICMS":        fmt_br(_fv(depois["Vlr ICMS"]) - _fv(antes.get("Vlr ICMS","0"))),
+            "BC ICMS ST Antes":     fmt_br(antes.get("BC ICMS ST", "0")),
+            "BC ICMS ST Depois":    fmt_br(depois["BC ICMS ST"]),
+            "Vlr ICMS ST Antes":    fmt_br(antes.get("Vlr ICMS ST", "0")),
+            "Vlr ICMS ST Depois":   fmt_br(depois["Vlr ICMS ST"]),
+            "Diff Vlr ICMS ST":     fmt_br(_fv(depois["Vlr ICMS ST"]) - _fv(antes.get("Vlr ICMS ST","0"))),
+            # IPI
+            "CST IPI Antes":        antes.get("CST IPI", ""),
+            "CST IPI Depois":       depois["CST IPI"],
+            "BC IPI Antes":         fmt_br(antes.get("BC IPI", "0")),
+            "BC IPI Depois":        fmt_br(depois["BC IPI"]),
+            "% IPI":                fmt_br(depois["% IPI"]),
+            "Vlr IPI Antes":        fmt_br(antes.get("Vlr IPI", "0")),
+            "Vlr IPI Depois":       fmt_br(depois["Vlr IPI"]),
+            "Diff Vlr IPI":         fmt_br(_fv(depois["Vlr IPI"]) - _fv(antes.get("Vlr IPI","0"))),
+            # impostoDevol
+            "pDevol Antes":         fmt_br(antes.get("pDevol", "0")),
+            "pDevol Depois":        fmt_br(depois["pDevol"]),
+            "vIPIDevol Antes":      fmt_br(antes.get("vIPIDevol", "0")),
+            "vIPIDevol Depois":     fmt_br(depois["vIPIDevol"]),
+            "Diff vIPIDevol":       fmt_br(_fv(depois["vIPIDevol"]) - _fv(antes.get("vIPIDevol","0"))),
+            # PIS
+            "CST PIS Antes":        antes.get("CST PIS", ""),
+            "CST PIS Depois":       depois["CST PIS"],
+            "BC PIS Antes":         fmt_br(antes.get("BC PIS", "0")),
+            "BC PIS Depois":        fmt_br(depois["BC PIS"]),
+            "% PIS":                fmt_br(depois["% PIS"]),
+            "Vlr PIS Antes":        fmt_br(antes.get("Vlr PIS", "0")),
+            "Vlr PIS Depois":       fmt_br(depois["Vlr PIS"]),
+            "Diff Vlr PIS":         fmt_br(_fv(depois["Vlr PIS"]) - _fv(antes.get("Vlr PIS","0"))),
+            # COFINS
+            "CST COFINS Antes":     antes.get("CST COFINS", ""),
+            "CST COFINS Depois":    depois["CST COFINS"],
+            "BC COFINS Antes":      fmt_br(antes.get("BC COFINS", "0")),
+            "BC COFINS Depois":     fmt_br(depois["BC COFINS"]),
+            "% COFINS":             fmt_br(depois["% COFINS"]),
+            "Vlr COFINS Antes":     fmt_br(antes.get("Vlr COFINS", "0")),
+            "Vlr COFINS Depois":    fmt_br(depois["Vlr COFINS"]),
+            "Diff Vlr COFINS":      fmt_br(_fv(depois["Vlr COFINS"]) - _fv(antes.get("Vlr COFINS","0"))),
+            "Tem Diferença":        "SIM" if tem_diff else "NÃO",
         }
         diferencas.append(row_conf)
 
@@ -900,6 +883,7 @@ def recalcular_totais(inf_nfe):
                         except Exception: pass
                     break
 
+        # vIPIDevol já zerado → soma 0.00
         imp_devol = find(filho, "impostoDevol")
         if imp_devol:
             el = find(imp_devol, "IPI", "vIPIDevol")
@@ -959,25 +943,28 @@ def gerar_excel_conferencia(todas_diferencas: list) -> bytes:
         b_nrm = Border(left=thin,  right=thin,  top=thin,  bottom=thin)
 
         grupos = {
-            "id":     {"cols": ["Arquivo","Chave NF-e","Nro Documento","Data Emissão",
-                                "Data Entrada","Razão Social","CNPJ/CPF","UF","nItem",
-                                "Cód Item","Desc Item","NCM","CFOP Antes","CFOP Depois",
-                                "Vlr Documento"], "cor": "2E4057"},
-            "icms":   {"cols": ["CST ICMS Antes","CST ICMS Depois","BC ICMS Antes",
-                                "BC ICMS Depois","% ICMS","Vlr ICMS Antes","Vlr ICMS Depois",
-                                "Diff Vlr ICMS","BC ICMS ST Antes","BC ICMS ST Depois",
-                                "Vlr ICMS ST Antes","Vlr ICMS ST Depois","Diff Vlr ICMS ST"],
-                       "cor": "1F4E79"},
-            "ipi":    {"cols": ["CST IPI Antes","CST IPI Depois","BC IPI Antes",
-                                "BC IPI Depois","% IPI","Vlr IPI Antes","Vlr IPI Depois",
-                                "Diff Vlr IPI"], "cor": "375623"},
-            "pis":    {"cols": ["CST PIS Antes","CST PIS Depois","BC PIS Antes",
-                                "BC PIS Depois","% PIS","Vlr PIS Antes","Vlr PIS Depois",
-                                "Diff Vlr PIS"], "cor": "7B2C2C"},
-            "cofins": {"cols": ["CST COFINS Antes","CST COFINS Depois","BC COFINS Antes",
-                                "BC COFINS Depois","% COFINS","Vlr COFINS Antes",
-                                "Vlr COFINS Depois","Diff Vlr COFINS"], "cor": "843C0C"},
-            "flag":   {"cols": ["Tem Diferença"], "cor": COR_LARANJA},
+            "id":      {"cols": ["Arquivo","Chave NF-e","Nro Documento","Data Emissão",
+                                 "Data Entrada","Razão Social","CNPJ/CPF","UF","nItem",
+                                 "Cód Item","Desc Item","NCM","CFOP XML","CFOP XLSX",
+                                 "Vlr Documento"], "cor": "2E4057"},
+            "icms":    {"cols": ["CST ICMS Antes","CST ICMS Depois","BC ICMS Antes",
+                                 "BC ICMS Depois","% ICMS","Vlr ICMS Antes","Vlr ICMS Depois",
+                                 "Diff Vlr ICMS","BC ICMS ST Antes","BC ICMS ST Depois",
+                                 "Vlr ICMS ST Antes","Vlr ICMS ST Depois","Diff Vlr ICMS ST"],
+                        "cor": "1F4E79"},
+            "ipi":     {"cols": ["CST IPI Antes","CST IPI Depois","BC IPI Antes",
+                                 "BC IPI Depois","% IPI","Vlr IPI Antes","Vlr IPI Depois",
+                                 "Diff Vlr IPI"], "cor": "375623"},
+            "devol":   {"cols": ["pDevol Antes","pDevol Depois",
+                                 "vIPIDevol Antes","vIPIDevol Depois","Diff vIPIDevol"],
+                        "cor": "7B3F00"},
+            "pis":     {"cols": ["CST PIS Antes","CST PIS Depois","BC PIS Antes",
+                                 "BC PIS Depois","% PIS","Vlr PIS Antes","Vlr PIS Depois",
+                                 "Diff Vlr PIS"], "cor": "7B2C2C"},
+            "cofins":  {"cols": ["CST COFINS Antes","CST COFINS Depois","BC COFINS Antes",
+                                 "BC COFINS Depois","% COFINS","Vlr COFINS Antes",
+                                 "Vlr COFINS Depois","Diff Vlr COFINS"], "cor": "843C0C"},
+            "flag":    {"cols": ["Tem Diferença"], "cor": COR_LARANJA},
         }
 
         col_names = list(df.columns)
@@ -1057,7 +1044,7 @@ def gerar_excel_conferencia(todas_diferencas: list) -> bytes:
     return buf.read()
 
 # ─────────────────────────────────────────────
-# RENDERIZA BLOCO DE RESULTADOS PERSISTENTES
+# RESULTADOS PERSISTENTES
 # ─────────────────────────────────────────────
 def render_resultados():
     m = st.session_state.resultado_metricas
@@ -1067,7 +1054,7 @@ def render_resultados():
     st.divider()
     st.markdown("### ✅ Resultado do Processamento")
 
-    col_np, col_esp = st.columns([2, 6])
+    col_np, _ = st.columns([2, 6])
     with col_np:
         if st.button(
             "🔁 Iniciar Novo Processo",
@@ -1153,7 +1140,7 @@ def main():
     st.markdown("""
     <div class="main-header">
         <h2>🧾 Enriquecedor de NF-e — DNI</h2>
-        <p>Thomson Reuters · Domínio Sistemas · Processamento Fiscal Automatizado · v7.2</p>
+        <p>Thomson Reuters · Domínio Sistemas · Processamento Fiscal Automatizado · v7.3</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -1164,7 +1151,7 @@ def main():
         render_resultados()
         st.markdown("""
         <div class="footer">
-            Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v7.2 · DNI
+            Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v7.3 · DNI
         </div>
         """, unsafe_allow_html=True)
         return
@@ -1184,7 +1171,7 @@ def main():
 
     lista_ativos_str = sorted(cfops_ativas)
     st.info(
-        f"🔢 **CFOPs ativos para processamento:** "
+        f"🔢 **CFOPs filtrados (lidos do XML):** "
         f"{', '.join(lista_ativos_str) if lista_ativos_str else '⚠️ Nenhum CFOP ativo — configure na barra lateral.'}"
     )
 
@@ -1210,13 +1197,13 @@ def main():
 
         col_a, col_b, col_c = st.columns(3)
         col_a.metric("📊 Itens indexados", len(dados_indexados))
-        col_b.metric("🔢 CFOPs ativos",    len(cfops_ativas))
+        col_b.metric("🔢 CFOPs filtro",    len(cfops_ativas))
         col_c.metric("📁 Arquivos",        len(arquivos_xml))
 
         with st.expander("🔍 Debug — primeiros 5 itens indexados"):
             for i, ((ch, seq), d) in enumerate(list(dados_indexados.items())[:5]):
                 st.code(
-                    f"Chave: {ch} | Seq: {seq} | CFOP: {d['cfop']}\n"
+                    f"Chave: {ch} | Seq: {seq} | CFOP XLSX: {d['cfop']}\n"
                     f"CST ICMS: {d['cst_icms']} | vICMS: {d['vlr_icms']} | "
                     f"BC ST: {d['base_icms_st']} | vST: {d['vlr_icms_st']}\n"
                     f"BC IPI: {d['base_ipi']} | % IPI: {d['perc_ipi']} | "
@@ -1269,7 +1256,7 @@ def main():
 
     st.markdown("""
     <div class="footer">
-        Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v7.2 · DNI
+        Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v7.3 · DNI
     </div>
     """, unsafe_allow_html=True)
 
