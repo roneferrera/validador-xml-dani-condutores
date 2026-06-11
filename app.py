@@ -53,8 +53,8 @@ def _init_state():
         "cfop_catalogo": dict(CATALOGO_PADRAO),
         "cfop_ativos": set(ATIVOS_PADRAO),
         "resultado_excel_bytes": None,
-        "resultado_xmls_modificados": {},   # {nome: bytes} — apenas os alterados
-        "resultado_xmls_originais": {},     # {nome: bytes} — todos os originais
+        "resultado_xmls_modificados": {},
+        "resultado_xmls_originais": {},
         "resultado_log": [],
         "resultado_metricas": None,
         "resultado_diferencas": [],
@@ -153,7 +153,7 @@ def render_sidebar():
         st.caption(f"Catálogo: {total} | Ativos: {ativos} | Inativos: {total - ativos}")
         st.markdown("---")
         st.markdown("**Thomson Reuters · Domínio Sistemas**")
-        st.markdown("**Enriquecedor NF-e v7.7**")
+        st.markdown("**Enriquecedor NF-e v7.8**")
 
 # ── Helpers gerais ─────────────────────────────────────────────────────────────
 def limpar_chave(valor: str) -> str:
@@ -218,6 +218,13 @@ def ler_xlsx(conteudo_bytes: bytes) -> dict:
         perc_ipi = limpar_valor(reg.get("Perc Ipi", "0"))
         tem_ipi  = (base_ipi > 0 or vlr_ipi > 0)
 
+        # ── CST IPI: respeita o XLSX; fallback "50" quando tem_ipi e nan/00
+        cst_ipi_raw = safe_int_cst(reg.get("CST IPI", ""))
+        if tem_ipi and cst_ipi_raw in ("00", ""):
+            cst_ipi_final = "50"
+        else:
+            cst_ipi_final = cst_ipi_raw
+
         indexado[(chave_nfe, seq)] = {
             "cfop_xlsx":      cfop_xlsx,
             "cod_item":       reg.get("Cod Item", "").strip(),
@@ -234,7 +241,7 @@ def ler_xlsx(conteudo_bytes: bytes) -> dict:
             "vlr_icms":       vlr_icms,
             "base_icms_st":   limpar_valor(reg.get("Base Icms St", "0")),
             "vlr_icms_st":    vlr_icms_st,
-            "cst_ipi":        safe_int_cst(reg.get("CST IPI", "")),
+            "cst_ipi":        cst_ipi_final,   # ← corrigido
             "base_ipi":       base_ipi,
             "perc_ipi":       perc_ipi,
             "vlr_ipi":        vlr_ipi,
@@ -302,48 +309,89 @@ def aplicar_icms(icms_filho, dados):
 
 # ── IPI + impostoDevol ─────────────────────────────────────────────────────────
 def aplicar_ipi(imposto_elem, det_elem, dados):
+    """
+    Regra:
+    - Se tem_ipi = True (base ou valor > 0 no XLSX):
+        * Remove <IPINT> se existir
+        * Garante <IPITrib> com CST correto (vindo do XLSX, fallback "50")
+        * Preenche vBC, pIPI, vIPI
+    - Se tem_ipi = False:
+        * Não mexe no bloco IPI
+    - Sempre zera impostoDevol se existir
+    """
     modificado = False
     tem_ipi    = dados.get("tem_ipi", False)
+    cst_ipi    = dados["cst_ipi"]   # já tratado na leitura do XLSX
+
     if tem_ipi:
         ipi_elem = find(imposto_elem, "IPI")
+
         if ipi_elem is None:
+            # Cria o bloco IPI completo do zero
             ipi_elem = etree.Element(nstag("IPI"))
-            el_cenq = etree.SubElement(ipi_elem, nstag("cEnq")); el_cenq.text = "999"
+            el_cenq  = etree.SubElement(ipi_elem, nstag("cEnq")); el_cenq.text = "999"
             ipi_trib = etree.SubElement(ipi_elem, nstag("IPITrib"))
-            el_cst = etree.SubElement(ipi_trib, nstag("CST")); el_cst.text = dados["cst_ipi"] if dados["cst_ipi"] != "00" else "50"
-            el_vbc = etree.SubElement(ipi_trib, nstag("vBC")); el_vbc.text = fmt(dados["base_ipi"])
-            el_pipi = etree.SubElement(ipi_trib, nstag("pIPI")); el_pipi.text = fmt(dados["perc_ipi"])
-            el_vipi = etree.SubElement(ipi_trib, nstag("vIPI")); el_vipi.text = fmt(dados["vlr_ipi"])
+            etree.SubElement(ipi_trib, nstag("CST")).text  = cst_ipi
+            etree.SubElement(ipi_trib, nstag("vBC")).text  = fmt(dados["base_ipi"])
+            etree.SubElement(ipi_trib, nstag("pIPI")).text = fmt(dados["perc_ipi"])
+            etree.SubElement(ipi_trib, nstag("vIPI")).text = fmt(dados["vlr_ipi"])
             pis_elem = find(imposto_elem, "PIS")
-            if pis_elem is not None: imposto_elem.insert(list(imposto_elem).index(pis_elem), ipi_elem)
-            else: imposto_elem.append(ipi_elem)
+            if pis_elem is not None:
+                imposto_elem.insert(list(imposto_elem).index(pis_elem), ipi_elem)
+            else:
+                imposto_elem.append(ipi_elem)
             modificado = True
+
         else:
+            # Bloco IPI já existe — verifica se é IPINT ou IPITrib
+            ipint  = find(ipi_elem, "IPINT")
             ipi_trib = find(ipi_elem, "IPITrib")
-            if ipi_trib is not None:
+
+            if ipint is not None:
+                # ── CORREÇÃO PRINCIPAL: remove IPINT e cria IPITrib no lugar ──
+                ipi_elem.remove(ipint)
+                ipi_trib = etree.SubElement(ipi_elem, nstag("IPITrib"))
+                etree.SubElement(ipi_trib, nstag("CST")).text  = cst_ipi
+                etree.SubElement(ipi_trib, nstag("vBC")).text  = fmt(dados["base_ipi"])
+                etree.SubElement(ipi_trib, nstag("pIPI")).text = fmt(dados["perc_ipi"])
+                etree.SubElement(ipi_trib, nstag("vIPI")).text = fmt(dados["vlr_ipi"])
+                modificado = True
+
+            elif ipi_trib is not None:
+                # IPITrib já existe — atualiza campos
                 el_cst = find(ipi_trib, "CST")
-                if el_cst is not None: el_cst.text = dados["cst_ipi"]; modificado = True
+                if el_cst is not None:
+                    el_cst.text = cst_ipi
+                    modificado = True
+
+                # Remove campos inválidos (qUnid/vUnid)
                 for tag_rem in ["qUnid", "vUnid"]:
                     el_rem = find(ipi_trib, tag_rem)
-                    if el_rem is not None: ipi_trib.remove(el_rem); modificado = True
+                    if el_rem is not None:
+                        ipi_trib.remove(el_rem); modificado = True
+
+                # vBC
                 el_vbc = find(ipi_trib, "vBC")
                 if el_vbc is None:
-                    el_vbc = etree.Element(nstag("vBC")); el_vbc.text = fmt(dados["base_ipi"])
+                    el_vbc = etree.Element(nstag("vBC"))
                     _insert_after(ipi_trib, "CST", el_vbc)
-                else: el_vbc.text = fmt(dados["base_ipi"])
-                modificado = True
+                el_vbc.text = fmt(dados["base_ipi"]); modificado = True
+
+                # pIPI
                 el_pipi = find(ipi_trib, "pIPI")
                 if el_pipi is None:
-                    el_pipi = etree.Element(nstag("pIPI")); el_pipi.text = fmt(dados["perc_ipi"])
+                    el_pipi = etree.Element(nstag("pIPI"))
                     _insert_after(ipi_trib, "vBC", el_pipi)
-                else: el_pipi.text = fmt(dados["perc_ipi"])
-                modificado = True
+                el_pipi.text = fmt(dados["perc_ipi"]); modificado = True
+
+                # vIPI
                 el_vipi = find(ipi_trib, "vIPI")
                 if el_vipi is None:
-                    el_vipi = etree.Element(nstag("vIPI")); el_vipi.text = fmt(dados["vlr_ipi"])
+                    el_vipi = etree.Element(nstag("vIPI"))
                     _insert_after(ipi_trib, "pIPI", el_vipi)
-                else: el_vipi.text = fmt(dados["vlr_ipi"])
-                modificado = True
+                el_vipi.text = fmt(dados["vlr_ipi"]); modificado = True
+
+    # Sempre zera impostoDevol se existir
     imp_devol = find(det_elem, "impostoDevol")
     if imp_devol is not None:
         el_pdevol = find(imp_devol, "pDevol")
@@ -352,6 +400,7 @@ def aplicar_ipi(imposto_elem, det_elem, dados):
         if ipi_devol is not None:
             el_vipidevol = find(ipi_devol, "vIPIDevol")
             if el_vipidevol is not None: el_vipidevol.text = "0.00"; modificado = True
+
     return modificado
 
 # ── Processamento XML ──────────────────────────────────────────────────────────
@@ -376,7 +425,7 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas_xlsx
             itens_validos.append((det, n_item, dados))
 
     if not itens_validos:
-        return None, "nenhum item com CFOP de devolução válido — não alterado", "info", []
+        return None, "nenhum item com CFOP válido — não alterado", "info", []
 
     modificado = False
     diferencas = []
@@ -396,6 +445,7 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas_xlsx
 
         cfop_xml_original = _get(prod, "CFOP")
 
+        # ── Captura estado ANTES ──────────────────────────────────────────────
         antes = {}
         icms_pai = find(imposto, "ICMS")
         if icms_pai:
@@ -408,14 +458,25 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas_xlsx
                     antes["BC ICMS ST"]  = _get(icms_f, "vBCST")
                     antes["Vlr ICMS ST"] = _get(icms_f, "vICMSST")
                     break
-        ipi_t = find(imposto, "IPI", "IPITrib")
-        if ipi_t:
-            antes["CST IPI"] = _get(ipi_t, "CST")
-            vbc_antes = _get(ipi_t, "vBC")
-            if vbc_antes == "0": vbc_antes = _get(ipi_t, "qUnid")
-            antes["BC IPI"]  = vbc_antes
-            antes["% IPI"]   = _get(ipi_t, "pIPI")
-            antes["Vlr IPI"] = _get(ipi_t, "vIPI")
+
+        # IPI antes: pode ser IPINT ou IPITrib
+        ipi_elem_antes = find(imposto, "IPI")
+        if ipi_elem_antes:
+            ipi_trib_antes = find(ipi_elem_antes, "IPITrib")
+            ipi_nt_antes   = find(ipi_elem_antes, "IPINT")
+            if ipi_trib_antes:
+                antes["CST IPI"] = _get(ipi_trib_antes, "CST")
+                vbc_antes = _get(ipi_trib_antes, "vBC")
+                if vbc_antes == "0": vbc_antes = _get(ipi_trib_antes, "qUnid")
+                antes["BC IPI"]  = vbc_antes
+                antes["% IPI"]   = _get(ipi_trib_antes, "pIPI")
+                antes["Vlr IPI"] = _get(ipi_trib_antes, "vIPI")
+            elif ipi_nt_antes:
+                antes["CST IPI"] = _get(ipi_nt_antes, "CST")
+                antes["BC IPI"]  = "0"
+                antes["% IPI"]   = "0"
+                antes["Vlr IPI"] = "0"
+
         pis_p = find(imposto, "PIS")
         if pis_p:
             for pf in pis_p:
@@ -430,6 +491,7 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas_xlsx
         antes["pDevol"]    = _get(imp_devol_el, "pDevol")           if imp_devol_el is not None else "0"
         antes["vIPIDevol"] = _get(imp_devol_el, "IPI", "vIPIDevol") if imp_devol_el is not None else "0"
 
+        # ── Aplica alterações ─────────────────────────────────────────────────
         el_ncm = find(prod, "NCM")
         if el_ncm is not None and dados["ncm"]: el_ncm.text = dados["ncm"]; modificado = True
 
@@ -459,6 +521,7 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas_xlsx
                     if el is not None: el.text = tv; modificado = True
                 break
 
+        # ── Estado DEPOIS ─────────────────────────────────────────────────────
         depois = {
             "CST ICMS": dados["cst_icms"], "BC ICMS": dados["base_icms"],
             "% ICMS": dados["perc_icms"],  "Vlr ICMS": dados["vlr_icms"],
@@ -702,7 +765,6 @@ def gerar_excel_conferencia(todas_diferencas: list) -> bytes:
                     cell.fill=PatternFill("solid",fgColor=COR_VERDE_BG)
                     cell.font=Font(color=COR_VERDE_FT,bold=True,size=9,name="Segoe UI")
 
-        # Linha de totalizador
         total_row_idx=ws.max_row+1
         fill_total=PatternFill("solid",fgColor=COR_TOTAL_BG)
         font_total=Font(color=COR_TOTAL_FT,bold=True,size=9,name="Segoe UI")
@@ -747,14 +809,8 @@ def gerar_excel_conferencia(todas_diferencas: list) -> bytes:
     buf.seek(0)
     return buf.read()
 
-# ── ZIP final com TODOS os XMLs (modificados + originais não alterados) ────────
+# ── ZIP final ──────────────────────────────────────────────────────────────────
 def gerar_zip_completo(xmls_modificados: dict, xmls_originais: dict) -> bytes:
-    """
-    Monta um ZIP com:
-    - XMLs modificados (versão processada)
-    - XMLs originais que não foram modificados (passados sem alteração)
-    Subpastas: modificados/ e originais/
-    """
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         nomes_modificados = set(xmls_modificados.keys())
@@ -824,7 +880,6 @@ def render_resultados():
                 mime="application/zip",
                 use_container_width=True, key="dl_zip_completo",
             )
-            # Botão secundário: apenas os modificados
             if total_mod > 0:
                 buf_mod = io.BytesIO()
                 with zipfile.ZipFile(buf_mod, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -856,7 +911,7 @@ def main():
     st.markdown("""
     <div class="main-header">
         <h2>🧾 Enriquecedor de NF-e — DNI</h2>
-        <p>Thomson Reuters · Domínio Sistemas · v7.7 · ZIP final inclui modificados + não alterados</p>
+        <p>Thomson Reuters · Domínio Sistemas · v7.8 · IPI: IPINT→IPITrib corrigido · CST respeitado do XLSX</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -870,7 +925,7 @@ def main():
     if st.session_state.processamento_concluido:
         st.info("📌 Resultado disponível. Clique em **🔁 Iniciar Novo Processo** para processar novos arquivos.")
         render_resultados()
-        st.markdown('<div class="footer">Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v7.7 · DNI</div>',
+        st.markdown('<div class="footer">Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v7.8 · DNI</div>',
                     unsafe_allow_html=True)
         return
 
@@ -911,11 +966,10 @@ def main():
                     f"CFOP XLSX (filtro): {d['cfop_xlsx']}\n"
                     f"CST ICMS: {d['cst_icms']} | vICMS: {d['vlr_icms']} | "
                     f"BC ST: {d['base_icms_st']} | vST: {d['vlr_icms_st']}\n"
-                    f"BC IPI: {d['base_ipi']} | % IPI: {d['perc_ipi']} | "
-                    f"vIPI: {d['vlr_ipi']} | tem_ipi: {d['tem_ipi']}"
+                    f"CST IPI: {d['cst_ipi']} | BC IPI: {d['base_ipi']} | "
+                    f"% IPI: {d['perc_ipi']} | vIPI: {d['vlr_ipi']} | tem_ipi: {d['tem_ipi']}"
                 )
 
-        # Coleta todos os XMLs (originais preservados)
         xmls_para_processar: dict[str, bytes] = {}
         for arq in arquivos_xml:
             if arq.name.lower().endswith(".zip"):
@@ -927,7 +981,7 @@ def main():
                 xmls_para_processar[arq.name] = arq.read()
 
         resultados        = []
-        xmls_modificados  = {}   # apenas os que foram alterados
+        xmls_modificados  = {}
         todas_diferencas  = []
         progress = st.progress(0)
         total    = len(xmls_para_processar)
@@ -937,7 +991,7 @@ def main():
                 conteudo, nome_arq, dados_indexados, cfops_ativas_xlsx)
             resultados.append((nome_arq, msg, status))
             if xml_out:
-                xmls_modificados[nome_arq] = xml_out   # versão processada
+                xmls_modificados[nome_arq] = xml_out
             todas_diferencas.extend(diffs)
             progress.progress((idx + 1) / total)
         progress.empty()
@@ -946,7 +1000,7 @@ def main():
 
         st.session_state.resultado_excel_bytes       = excel_bytes
         st.session_state.resultado_xmls_modificados  = xmls_modificados
-        st.session_state.resultado_xmls_originais    = xmls_para_processar  # todos os originais
+        st.session_state.resultado_xmls_originais    = xmls_para_processar
         st.session_state.resultado_log               = resultados
         st.session_state.resultado_diferencas        = todas_diferencas
         st.session_state.resultado_metricas          = {
@@ -959,7 +1013,7 @@ def main():
         st.session_state.processamento_concluido = True
         st.rerun()
 
-    st.markdown('<div class="footer">Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v7.7 · DNI</div>',
+    st.markdown('<div class="footer">Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v7.8 · DNI</div>',
                 unsafe_allow_html=True)
 
 
