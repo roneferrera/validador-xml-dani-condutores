@@ -87,9 +87,9 @@ def render_sidebar():
     with st.sidebar:
         st.markdown("## ⚙️ Configuração de CFOPs")
         st.markdown("---")
-        st.markdown("### 📥 CFOPs de Devolução (XLSX)")
+        st.markdown("### 📥 CFOPs de Devolução (Planilha)")
         st.markdown(
-            "<small>CFOPs de <b>entrada</b> do XLSX (DNI) usados para filtrar devoluções. "
+            "<small>CFOPs de <b>entrada</b> da planilha (DNI) usados para filtrar devoluções. "
             "O CFOP original do XML <b>não é alterado</b>.</small>",
             unsafe_allow_html=True,
         )
@@ -153,7 +153,7 @@ def render_sidebar():
         st.caption(f"Catálogo: {total} | Ativos: {ativos} | Inativos: {total - ativos}")
         st.markdown("---")
         st.markdown("**Thomson Reuters · Domínio Sistemas**")
-        st.markdown("**Enriquecedor NF-e v7.8**")
+        st.markdown("**Enriquecedor NF-e v7.9**")
 
 # ── Helpers gerais ─────────────────────────────────────────────────────────────
 def limpar_chave(valor: str) -> str:
@@ -181,13 +181,26 @@ def safe_int_cst(val) -> str:
     try: return str(int(float(s))).zfill(2)
     except Exception: return "00"
 
-# ── Leitura XLSX ───────────────────────────────────────────────────────────────
-def ler_xlsx(conteudo_bytes: bytes) -> dict:
+# ── Leitura XLSX / CSV ─────────────────────────────────────────────────────────
+def ler_planilha(conteudo_bytes: bytes, nome_arquivo: str) -> dict:
     indexado = {}
     try:
-        df = pd.read_excel(io.BytesIO(conteudo_bytes), dtype=str, engine="openpyxl")
+        nome_lower = nome_arquivo.lower()
+        if nome_lower.endswith(".csv"):
+            # Detecta separador automaticamente (vírgula ou ponto-e-vírgula)
+            amostra = conteudo_bytes[:4096].decode("utf-8", errors="replace")
+            sep = ";" if amostra.count(";") >= amostra.count(",") else ","
+            df = pd.read_csv(
+                io.BytesIO(conteudo_bytes),
+                dtype=str,
+                sep=sep,
+                encoding="utf-8-sig",   # lida com BOM do Excel
+                on_bad_lines="skip",
+            )
+        else:
+            df = pd.read_excel(io.BytesIO(conteudo_bytes), dtype=str, engine="openpyxl")
     except Exception as e:
-        st.error(f"Erro ao ler XLSX: {e}")
+        st.error(f"Erro ao ler planilha: {e}")
         return indexado
 
     df.columns = [str(c).strip() for c in df.columns]
@@ -216,9 +229,9 @@ def ler_xlsx(conteudo_bytes: bytes) -> dict:
 
         base_ipi = limpar_valor(reg.get("Base Ipi", "0"))
         perc_ipi = limpar_valor(reg.get("Perc Ipi", "0"))
+        vlr_ipi  = limpar_valor(reg.get("Vlr Ipi",  "0"))
         tem_ipi  = (base_ipi > 0 or vlr_ipi > 0)
 
-        # ── CST IPI: respeita o XLSX; fallback "50" quando tem_ipi e nan/00
         cst_ipi_raw = safe_int_cst(reg.get("CST IPI", ""))
         if tem_ipi and cst_ipi_raw in ("00", ""):
             cst_ipi_final = "50"
@@ -241,7 +254,7 @@ def ler_xlsx(conteudo_bytes: bytes) -> dict:
             "vlr_icms":       vlr_icms,
             "base_icms_st":   limpar_valor(reg.get("Base Icms St", "0")),
             "vlr_icms_st":    vlr_icms_st,
-            "cst_ipi":        cst_ipi_final,   # ← corrigido
+            "cst_ipi":        cst_ipi_final,
             "base_ipi":       base_ipi,
             "perc_ipi":       perc_ipi,
             "vlr_ipi":        vlr_ipi,
@@ -309,25 +322,14 @@ def aplicar_icms(icms_filho, dados):
 
 # ── IPI + impostoDevol ─────────────────────────────────────────────────────────
 def aplicar_ipi(imposto_elem, det_elem, dados):
-    """
-    Regra:
-    - Se tem_ipi = True (base ou valor > 0 no XLSX):
-        * Remove <IPINT> se existir
-        * Garante <IPITrib> com CST correto (vindo do XLSX, fallback "50")
-        * Preenche vBC, pIPI, vIPI
-    - Se tem_ipi = False:
-        * Não mexe no bloco IPI
-    - Sempre zera impostoDevol se existir
-    """
     modificado = False
     tem_ipi    = dados.get("tem_ipi", False)
-    cst_ipi    = dados["cst_ipi"]   # já tratado na leitura do XLSX
+    cst_ipi    = dados["cst_ipi"]
 
     if tem_ipi:
         ipi_elem = find(imposto_elem, "IPI")
 
         if ipi_elem is None:
-            # Cria o bloco IPI completo do zero
             ipi_elem = etree.Element(nstag("IPI"))
             el_cenq  = etree.SubElement(ipi_elem, nstag("cEnq")); el_cenq.text = "999"
             ipi_trib = etree.SubElement(ipi_elem, nstag("IPITrib"))
@@ -343,12 +345,10 @@ def aplicar_ipi(imposto_elem, det_elem, dados):
             modificado = True
 
         else:
-            # Bloco IPI já existe — verifica se é IPINT ou IPITrib
-            ipint  = find(ipi_elem, "IPINT")
+            ipint    = find(ipi_elem, "IPINT")
             ipi_trib = find(ipi_elem, "IPITrib")
 
             if ipint is not None:
-                # ── CORREÇÃO PRINCIPAL: remove IPINT e cria IPITrib no lugar ──
                 ipi_elem.remove(ipint)
                 ipi_trib = etree.SubElement(ipi_elem, nstag("IPITrib"))
                 etree.SubElement(ipi_trib, nstag("CST")).text  = cst_ipi
@@ -358,33 +358,28 @@ def aplicar_ipi(imposto_elem, det_elem, dados):
                 modificado = True
 
             elif ipi_trib is not None:
-                # IPITrib já existe — atualiza campos
                 el_cst = find(ipi_trib, "CST")
                 if el_cst is not None:
                     el_cst.text = cst_ipi
                     modificado = True
 
-                # Remove campos inválidos (qUnid/vUnid)
                 for tag_rem in ["qUnid", "vUnid"]:
                     el_rem = find(ipi_trib, tag_rem)
                     if el_rem is not None:
                         ipi_trib.remove(el_rem); modificado = True
 
-                # vBC
                 el_vbc = find(ipi_trib, "vBC")
                 if el_vbc is None:
                     el_vbc = etree.Element(nstag("vBC"))
                     _insert_after(ipi_trib, "CST", el_vbc)
                 el_vbc.text = fmt(dados["base_ipi"]); modificado = True
 
-                # pIPI
                 el_pipi = find(ipi_trib, "pIPI")
                 if el_pipi is None:
                     el_pipi = etree.Element(nstag("pIPI"))
                     _insert_after(ipi_trib, "vBC", el_pipi)
                 el_pipi.text = fmt(dados["perc_ipi"]); modificado = True
 
-                # vIPI
                 el_vipi = find(ipi_trib, "vIPI")
                 if el_vipi is None:
                     el_vipi = etree.Element(nstag("vIPI"))
@@ -459,7 +454,6 @@ def processar_xml(conteudo_xml, nome_arquivo, dados_indexados, cfops_ativas_xlsx
                     antes["Vlr ICMS ST"] = _get(icms_f, "vICMSST")
                     break
 
-        # IPI antes: pode ser IPINT ou IPITrib
         ipi_elem_antes = find(imposto, "IPI")
         if ipi_elem_antes:
             ipi_trib_antes = find(ipi_elem_antes, "IPITrib")
@@ -911,12 +905,12 @@ def main():
     st.markdown("""
     <div class="main-header">
         <h2>🧾 Enriquecedor de NF-e — DNI</h2>
-        <p>Thomson Reuters · Domínio Sistemas · v7.8 · IPI: IPINT→IPITrib corrigido · CST respeitado do XLSX</p>
+        <p>Thomson Reuters · Domínio Sistemas · v7.9 · XLSX e CSV suportados · IPI: IPINT→IPITrib corrigido</p>
     </div>
     """, unsafe_allow_html=True)
 
     st.info(
-        "ℹ️ **Lógica De/Para de CFOP:** O CFOP do XLSX é usado **apenas para filtrar** itens de devolução. "
+        "ℹ️ **Lógica De/Para de CFOP:** O CFOP do XLSX/CSV é usado **apenas para filtrar** itens de devolução. "
         "O **CFOP original do XML nunca é alterado**. "
         "O ZIP final contém **todos os XMLs**: modificados na pasta `modificados/` e "
         "os não alterados na pasta `nao_alterados/`."
@@ -925,14 +919,16 @@ def main():
     if st.session_state.processamento_concluido:
         st.info("📌 Resultado disponível. Clique em **🔁 Iniciar Novo Processo** para processar novos arquivos.")
         render_resultados()
-        st.markdown('<div class="footer">Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v7.8 · DNI</div>',
+        st.markdown('<div class="footer">Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v7.9 · DNI</div>',
                     unsafe_allow_html=True)
         return
 
     col_up1, col_up2 = st.columns(2)
     with col_up1:
-        st.markdown("#### 📂 Arquivo XLSX — Domínio Sistemas")
-        arquivo_xlsx = st.file_uploader("xlsx", type=["xlsx"], key="xlsx", label_visibility="collapsed")
+        st.markdown("#### 📂 Planilha XLSX ou CSV — Domínio Sistemas")
+        arquivo_xlsx = st.file_uploader(
+            "planilha", type=["xlsx", "csv"], key="xlsx", label_visibility="collapsed"
+        )
     with col_up2:
         st.markdown("#### 📄 Arquivos XML de NF-e")
         arquivos_xml = st.file_uploader("xmls", type=["xml","zip"], accept_multiple_files=True,
@@ -940,19 +936,19 @@ def main():
 
     lista_ativos_str = sorted(cfops_ativas_xlsx)
     st.info(
-        f"🔢 **CFOPs de devolução ativos (XLSX):** "
+        f"🔢 **CFOPs de devolução ativos (Planilha):** "
         f"{', '.join(lista_ativos_str) if lista_ativos_str else '⚠️ Nenhum CFOP ativo — configure na barra lateral.'}"
     )
     st.divider()
 
     if st.button("▶ Processar XMLs", type="primary", key="btn_processar", use_container_width=True):
-        if not arquivo_xlsx:   st.error("❌ Selecione o arquivo XLSX."); st.stop()
-        if not arquivos_xml:   st.error("❌ Selecione ao menos um XML ou ZIP."); st.stop()
+        if not arquivo_xlsx:      st.error("❌ Selecione a planilha (XLSX ou CSV)."); st.stop()
+        if not arquivos_xml:      st.error("❌ Selecione ao menos um XML ou ZIP."); st.stop()
         if not cfops_ativas_xlsx: st.error("❌ Nenhum CFOP ativo. Configure na barra lateral."); st.stop()
 
-        with st.spinner("🔄 Lendo XLSX..."):
-            dados_indexados = ler_xlsx(arquivo_xlsx.read())
-        if not dados_indexados: st.error("❌ Nenhum item válido no XLSX."); st.stop()
+        with st.spinner("🔄 Lendo planilha..."):
+            dados_indexados = ler_planilha(arquivo_xlsx.read(), arquivo_xlsx.name)
+        if not dados_indexados: st.error("❌ Nenhum item válido na planilha."); st.stop()
 
         col_a, col_b, col_c = st.columns(3)
         col_a.metric("📊 Itens indexados", len(dados_indexados))
@@ -963,7 +959,7 @@ def main():
             for i, ((ch, seq), d) in enumerate(list(dados_indexados.items())[:5]):
                 st.code(
                     f"Chave: {ch} | Seq: {seq}\n"
-                    f"CFOP XLSX (filtro): {d['cfop_xlsx']}\n"
+                    f"CFOP Planilha (filtro): {d['cfop_xlsx']}\n"
                     f"CST ICMS: {d['cst_icms']} | vICMS: {d['vlr_icms']} | "
                     f"BC ST: {d['base_icms_st']} | vST: {d['vlr_icms_st']}\n"
                     f"CST IPI: {d['cst_ipi']} | BC IPI: {d['base_ipi']} | "
@@ -1013,7 +1009,7 @@ def main():
         st.session_state.processamento_concluido = True
         st.rerun()
 
-    st.markdown('<div class="footer">Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v7.8 · DNI</div>',
+    st.markdown('<div class="footer">Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v7.9 · DNI</div>',
                 unsafe_allow_html=True)
 
 
