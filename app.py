@@ -153,7 +153,7 @@ def render_sidebar():
         st.caption(f"Catálogo: {total} | Ativos: {ativos} | Inativos: {total - ativos}")
         st.markdown("---")
         st.markdown("**Thomson Reuters · Domínio Sistemas**")
-        st.markdown("**Enriquecedor NF-e v7.9**")
+        st.markdown("**Enriquecedor NF-e v8.0**")
 
 # ── Helpers gerais ─────────────────────────────────────────────────────────────
 def limpar_chave(valor: str) -> str:
@@ -181,24 +181,112 @@ def safe_int_cst(val) -> str:
     try: return str(int(float(s))).zfill(2)
     except Exception: return "00"
 
+# ── Detecção automática de encoding ───────────────────────────────────────────
+def detectar_encoding(conteudo_bytes: bytes) -> str:
+    """
+    Detecta o encoding do arquivo em cascata:
+      1. BOM explícito (UTF-32, UTF-16, UTF-8 BOM)
+      2. chardet com confiança >= 70% (opcional — não quebra se não instalado)
+      3. Tentativas manuais em ordem de prevalência (BR)
+      4. Fallback final: latin-1 (nunca falha)
+    """
+    # ── 1. Detecção por BOM ────────────────────────────────────────────────────
+    BOMS = [
+        (b"\xFF\xFE\x00\x00", "utf-32-le"),
+        (b"\x00\x00\xFE\xFF", "utf-32-be"),
+        (b"\xFF\xFE",         "utf-16-le"),
+        (b"\xFE\xFF",         "utf-16-be"),
+        (b"\xEF\xBB\xBF",    "utf-8-sig"),   # UTF-8 com BOM — Excel "Salvar como CSV"
+    ]
+    for bom, enc in BOMS:
+        if conteudo_bytes.startswith(bom):
+            return enc
+
+    # ── 2. chardet (análise estatística) ──────────────────────────────────────
+    try:
+        import chardet
+        amostra    = conteudo_bytes[:32_768]
+        resultado  = chardet.detect(amostra)
+        enc_bruto  = (resultado.get("encoding") or "").lower().replace("-", "").replace("_", "")
+        confianca  = resultado.get("confidence") or 0
+
+        ALIAS = {
+            "ascii":       "utf-8",
+            "utf8":        "utf-8",
+            "utf8sig":     "utf-8-sig",
+            "iso88591":    "latin-1",
+            "iso88592":    "latin-1",
+            "windows1252": "cp1252",
+            "windows1250": "cp1250",
+        }
+        enc_detectado = ALIAS.get(enc_bruto, enc_bruto)
+
+        if enc_detectado and confianca >= 0.70:
+            try:
+                conteudo_bytes.decode(enc_detectado)
+                return enc_detectado
+            except (UnicodeDecodeError, LookupError):
+                pass
+    except ImportError:
+        pass  # chardet não instalado — segue para tentativas manuais
+
+    # ── 3. Tentativas manuais em ordem de prevalência (Brasil) ────────────────
+    CANDIDATOS = ["utf-8", "cp1252", "latin-1", "cp1250", "utf-16"]
+    for enc in CANDIDATOS:
+        try:
+            conteudo_bytes.decode(enc)
+            return enc
+        except (UnicodeDecodeError, LookupError):
+            continue
+
+    # ── 4. Fallback absoluto — latin-1 nunca lança UnicodeDecodeError ─────────
+    return "latin-1"
+
 # ── Leitura XLSX / CSV ─────────────────────────────────────────────────────────
 def ler_planilha(conteudo_bytes: bytes, nome_arquivo: str) -> dict:
     indexado = {}
     try:
         nome_lower = nome_arquivo.lower()
         if nome_lower.endswith(".csv"):
-            # Detecta separador automaticamente (vírgula ou ponto-e-vírgula)
-            amostra = conteudo_bytes[:4096].decode("utf-8", errors="replace")
+            # ── Detecta encoding automaticamente ──────────────────────────────
+            encoding = detectar_encoding(conteudo_bytes)
+
+            # ── Detecta separador (vírgula ou ponto-e-vírgula) ─────────────────
+            try:
+                amostra = conteudo_bytes[:4096].decode(encoding, errors="replace")
+            except Exception:
+                amostra = conteudo_bytes[:4096].decode("latin-1", errors="replace")
             sep = ";" if amostra.count(";") >= amostra.count(",") else ","
-            df = pd.read_csv(
-                io.BytesIO(conteudo_bytes),
-                dtype=str,
-                sep=sep,
-                encoding="utf-8-sig",   # lida com BOM do Excel
-                on_bad_lines="skip",
-            )
+
+            # ── Tenta ler com o encoding detectado; fallback em cascata ────────
+            FALLBACKS = list(dict.fromkeys([encoding, "cp1252", "utf-8", "latin-1"]))
+            df = None
+            ultimo_erro = None
+            for enc in FALLBACKS:
+                try:
+                    df = pd.read_csv(
+                        io.BytesIO(conteudo_bytes),
+                        dtype=str,
+                        sep=sep,
+                        encoding=enc,
+                        on_bad_lines="skip",
+                    )
+                    encoding = enc   # registra o que funcionou
+                    break
+                except (UnicodeDecodeError, Exception) as e:
+                    ultimo_erro = e
+                    continue
+
+            if df is None:
+                st.error(f"Erro ao ler CSV após todas as tentativas de encoding: {ultimo_erro}")
+                return indexado
+
+            st.caption(f"📄 Encoding detectado: `{encoding}` | Separador: `{sep}` | Linhas: `{len(df)}`")
+
         else:
+            # XLSX/XLS — openpyxl gerencia encoding internamente
             df = pd.read_excel(io.BytesIO(conteudo_bytes), dtype=str, engine="openpyxl")
+
     except Exception as e:
         st.error(f"Erro ao ler planilha: {e}")
         return indexado
@@ -360,8 +448,7 @@ def aplicar_ipi(imposto_elem, det_elem, dados):
             elif ipi_trib is not None:
                 el_cst = find(ipi_trib, "CST")
                 if el_cst is not None:
-                    el_cst.text = cst_ipi
-                    modificado = True
+                    el_cst.text = cst_ipi; modificado = True
 
                 for tag_rem in ["qUnid", "vUnid"]:
                     el_rem = find(ipi_trib, tag_rem)
@@ -905,7 +992,7 @@ def main():
     st.markdown("""
     <div class="main-header">
         <h2>🧾 Enriquecedor de NF-e — DNI</h2>
-        <p>Thomson Reuters · Domínio Sistemas · v7.9 · XLSX e CSV suportados · IPI: IPINT→IPITrib corrigido</p>
+        <p>Thomson Reuters · Domínio Sistemas · v8.0 · XLSX e CSV suportados · Encoding automático · IPI: IPINT→IPITrib corrigido</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -919,7 +1006,7 @@ def main():
     if st.session_state.processamento_concluido:
         st.info("📌 Resultado disponível. Clique em **🔁 Iniciar Novo Processo** para processar novos arquivos.")
         render_resultados()
-        st.markdown('<div class="footer">Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v7.9 · DNI</div>',
+        st.markdown('<div class="footer">Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v8.0 · DNI</div>',
                     unsafe_allow_html=True)
         return
 
@@ -1009,7 +1096,7 @@ def main():
         st.session_state.processamento_concluido = True
         st.rerun()
 
-    st.markdown('<div class="footer">Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v7.9 · DNI</div>',
+    st.markdown('<div class="footer">Thomson Reuters · Domínio Sistemas · Enriquecedor NF-e v8.0 · DNI</div>',
                 unsafe_allow_html=True)
 
 
